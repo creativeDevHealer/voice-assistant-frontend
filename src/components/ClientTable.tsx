@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { User, Search, ChevronDown, ChevronUp, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { displayPhoneNumber } from "@/lib/phoneUtils";
 
 interface ClientData {
   id: number;
@@ -24,6 +25,8 @@ const ClientTable: React.FC<ClientTableProps> = ({ data }) => {
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
+
+
 
   const handleSort = (field: keyof ClientData) => {
     if (sortField === field) {
@@ -145,7 +148,7 @@ const ClientTable: React.FC<ClientTableProps> = ({ data }) => {
                     <TableCell className="font-medium">{client.id}</TableCell>
                     <TableCell>{client.firstName}</TableCell>
                     <TableCell>{client.lastName}</TableCell>
-                    <TableCell>{client.phone}</TableCell>
+                    <TableCell>{displayPhoneNumber(client.phone)}</TableCell>
                     <TableCell>{client.fileNumber}</TableCell>
                   </TableRow>
                 ))

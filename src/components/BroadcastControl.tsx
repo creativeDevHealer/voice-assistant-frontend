@@ -3,9 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Send, Phone, CheckCircle2, AlertTriangle, Clock, Ban, Pause, FileUp } from "lucide-react";
+import { Send, Phone, CheckCircle2, AlertTriangle, Clock, Ban, Pause, FileUp, RefreshCw } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatPhoneNumber, displayPhoneNumber } from "@/lib/phoneUtils";
 
 interface BroadcastProps {
   clientData: any[];
@@ -53,8 +54,9 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   const [duration, setDuration] = useState<string>("00:00:00");
   const callSidsRef = useRef(callSids);
   const [retryCount, setRetryCount] = useState(0);
-  const [serverUrl, setServerUrl] = useState('https://dft9oxen20o6ge-3000.proxy.runpod.net');
-  // const [serverUrl, setServerUrl] = useState('https://5b79-45-205-167-251.ngrok-free.app');
+  // const [serverUrl, setServerUrl] = useState('https://dft9oxen20o6ge-3000.proxy.runpod.net');
+  // const [serverUrl, setServerUrl] = useState('http://localhost:3000');
+  const [serverUrl, setServerUrl] = useState('https://inspired-touching-civet.ngrok-free.app');
   // const [serverUrl, setServerUrl] = useState('https://debd-74-80-151-196.ngrok-free.app');
   const MAX_RETRIES = 3;
   
@@ -74,7 +76,9 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
         const response = await fetch(`${serverUrl}/api/call-status/${callSid}`, {
             method: 'POST',
             headers: {
-                'Accept': 'application/json'
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'ngrok-skip-browser-warning': 'true'
             }
         });
 
@@ -92,38 +96,44 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   // Add polling function
   const pollCallStatus = async () => {
     const currentCallSids = callSidsRef.current;
-    console.log(currentCallSids.length);
+    console.log(`📊 Polling status for ${currentCallSids.length} calls`);
     console.log("completedCalls + failedCalls", completedCalls + failedCalls);
     console.log("clientData.length", clientData.length);
-    // if (!currentCallSids.length) {
-    //   console.log('No more calls to poll');
-    //   // Check if all calls are completed
-    //   console.log(clientData.length);
-    //   return;
-    // }
+    
+    if (!currentCallSids.length) {
+      console.log('⚠️ No callSids to poll');
+      return;
+    }
 
     try {
       const currentTime = Date.now();
       
       const statusPromises = currentCallSids.map(async (callSid) => {
         try {  
+          console.log(`🔍 Checking status for call: ${callSid}`);
           const data = await getCallStatus(callSid);
+          console.log(`📞 Call ${callSid} status:`, data);
 
-          setCallStatuses(prevStatuses =>
-            prevStatuses.map(call => {
+          setCallStatuses(prevStatuses => {
+            const updatedStatuses = prevStatuses.map(call => {
               if (call.callSid === callSid) {
                 if (data.data.status === "pending" && !call.pendingStartTime) {
+                  console.log(`⏳ Call ${callSid} still pending`);
                   return { ...call, ...data.data, pendingStartTime: currentTime };
                 }
                 if (data.data.status !== "pending") {
+                  console.log(`🔄 Call ${callSid} status changed to: ${data.data.status}`);
                   const { pendingStartTime, ...rest } = call;
                   return { ...rest, ...data.data };
                 }
                 return { ...call, ...data.data };
               }
               return call;
-            })
-          );
+            });
+            
+            console.log(`📋 Updated call statuses, total: ${updatedStatuses.length}`);
+            return updatedStatuses;
+          });
 
           if (data.data.status === "completed" || data.data.status === "voicemail" || data.data.status === "in-progress" || data.data.status === "answered") {
             console.log("Call completed:", callSid);
@@ -232,13 +242,15 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     localStorage.setItem('broadcastState', JSON.stringify(state));
   }, [isBroadcasting, completedCalls, failedCalls, callSids, callStatuses, startTime, currentProgress]);
 
+
+
   // Helper function to personalize template
   function personalizeTemplate(template: string, client: any) {
     return template
       .replace(/\{firstName\}/g, client.firstName)
       .replace(/\{lastName\}/g, client.lastName)
       .replace(/\{fileNumber\}/g, client.fileNumber)
-      .replace(/\{phoneNumber\}/g, client.phone);
+      .replace(/\{phoneNumber\}/g, formatPhoneNumber(client.phone));
   }
 
   function chunkArray(array, size) {
@@ -249,7 +261,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     return result;
   }
 
-  const batchSize = 50;
+  const batchSize = 5; // Very small batches for very low channel limits
   const RETRY_DELAY = 2000;
 
   // Add delay function
@@ -306,6 +318,18 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   }, [isBroadcasting, startTime]);
 
   const resetCounters = () => {
+    // Remove duplicates based on client ID as a safety measure
+    const uniqueStatuses = callStatuses.filter((status, index, self) => 
+      index === self.findIndex(s => s.id === status.id)
+    );
+    
+    // Update callStatuses if duplicates were found
+    if (uniqueStatuses.length !== callStatuses.length) {
+      console.warn(`🔧 Removed ${callStatuses.length - uniqueStatuses.length} duplicate call statuses`);
+      setCallStatuses(uniqueStatuses);
+      return; // Exit early, useEffect will call this again with clean data
+    }
+    
     const completedStatusCount = callStatuses.filter(
       call => call.status === "completed" || 
       call.status === "voicemail" || 
@@ -386,44 +410,59 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     
     console.log("Starting new broadcast - Reset counters to 0");
 
-    try {
-      // Process all clients in batches
-      const clientChunks = chunkArray(clientData, batchSize);
-      let isFirstBatch = true;
+    // Process all clients in batches with resilient error handling
+    const clientChunks = chunkArray(clientData, batchSize);
+    let isFirstBatch = true;
+    let totalSuccessfulCalls = 0;
+    let totalFailedBatches = 0;
 
-      for (const chunk of clientChunks) {
-        // Add delay between batches
+    for (let batchIndex = 0; batchIndex < clientChunks.length; batchIndex++) {
+      const chunk = clientChunks[batchIndex];
+      
+      try {
+        // Add longer delay between batches to respect channel limits
         if (!isFirstBatch) {
-          await delay(1000); // 1 second delay between batches
+          await delay(5000); // 5 second delay between batches
         }
-
+        
+        console.log(`Processing batch ${batchIndex + 1}/${clientChunks.length} with ${chunk.length} calls`);
+        
         const response = await makeApiCall(`${serverUrl}/api/make-call`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'ngrok-skip-browser-warning': 'true'
+          },
           body: JSON.stringify({
-            phonenumber: chunk.map(client => client.phone).join(','),
+            phonenumber: chunk.map(client => formatPhoneNumber(client.phone)).join(','),
             contact_id: chunk.map(client => client.id).join(','),
             contact_name: chunk.map(client => client.firstName + " " + client.lastName).join(','),
-            email: chunk.map(client => client.email).join(','),
-            contact_company: chunk.map(client => client.company).join(','),
-            contact_position: chunk.map(client => client.position).join(','),
-            empresa: "",
-            voiceId: "21m00Tcm4TlvDq8ikWAM",
-            stability: 90,
-            similarity_boost: 20,
-            style_exaggeration: 10,
             content: chunk.map(client => personalizeTemplate(selectedTemplate.content, client)),
-            todo: "",
-            notodo: "",
-            campaign_id: "",
-            ai_profile_name: ""
           })
         });
 
         if (!response.ok) {
           const errorText = await response.text();
-          console.error('API Error:', errorText);
-          throw new Error(`Failed to start calls: ${response.status} ${response.statusText}`);
+          console.error(`Batch ${batchIndex + 1} API Error:`, errorText);
+          totalFailedBatches++;
+          
+          // Mark this batch as failed but continue with next batch
+          const failedStatuses = chunk.map((client) => ({
+            id: client.id,
+            clientName: client.firstName + " " + client.lastName,
+            phone: formatPhoneNumber(client.phone),
+            callSid: `failed_batch_${batchIndex}_${client.id}`,
+            status: "failed" as const,
+            message: `Batch failed: ${response.status} ${response.statusText}`
+          }));
+          
+          setCallStatuses(prevStatuses => {
+            const existingClientIds = new Set(prevStatuses.map(cs => cs.id));
+            const newFailedStatuses = failedStatuses.filter(cs => !existingClientIds.has(cs.id));
+            console.log(`Adding ${newFailedStatuses.length} failed statuses (filtered duplicates by clientId)`);
+            return [...prevStatuses, ...newFailedStatuses];
+          });
+          continue; // Continue to next batch
         }
 
         const contentType = response.headers.get('content-type');
@@ -435,42 +474,144 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
             
             if (data.success && data.data && data.data.callSids) {
               setCallSids(prev => [...prev, ...data.data.callSids]);
+              totalSuccessfulCalls += data.data.callSids.length;
               
-              // Initialize call statuses
-              const initialStatuses = chunk.map((client, idx) => ({
-                id: client.id,
-                clientName: client.firstName + " " + client.lastName,
-                phone: client.phone,
-                callSid: data.data.callSids[idx],
-                status: "pending" as const
-              }));
+              console.log(`Batch ${batchIndex + 1} - Chunk size: ${chunk.length}, CallSids received: ${data.data.callSids.length}`);
+              console.log(`CallSids:`, data.data.callSids);
+              
+              // Initialize call statuses - handle mismatched array sizes
+              const initialStatuses = [];
+              const callSidsArray = data.data.callSids || [];
+              
+              for (let idx = 0; idx < chunk.length; idx++) {
+                const client = chunk[idx];
+                const callSid = callSidsArray[idx];
+                
+                if (callSid) {
+                  // Successful call - has callSid
+                  initialStatuses.push({
+                    id: client.id,
+                    clientName: client.firstName + " " + client.lastName,
+                    phone: formatPhoneNumber(client.phone),
+                    callSid: callSid,
+                    status: "pending" as const
+                  });
+                } else {
+                  // Failed call - no callSid (likely from backend error handling)
+                  initialStatuses.push({
+                    id: client.id,
+                    clientName: client.firstName + " " + client.lastName,
+                    phone: formatPhoneNumber(client.phone),
+                    callSid: `missing_${batchIndex}_${idx}_${Date.now()}`,
+                    status: "failed" as const,
+                    message: "No callSid received from backend"
+                  });
+                }
+              }
+              
+              console.log(`Created ${initialStatuses.length} initial statuses for batch ${batchIndex + 1}`);
               
               setCallStatuses(prevStatuses => {
-                const existingCallSids = new Set(prevStatuses.map(cs => cs.callSid));
-                const newStatuses = initialStatuses.filter(cs => !existingCallSids.has(cs.callSid));
+                // Use both callSid and client ID to prevent duplicates
+                const existingKeys = new Set(prevStatuses.map(cs => `${cs.callSid}-${cs.id}`));
+                const existingClientIds = new Set(prevStatuses.map(cs => cs.id));
+                
+                const newStatuses = initialStatuses.filter(cs => {
+                  const key = `${cs.callSid}-${cs.id}`;
+                  // Skip if exact same callSid-clientId combo exists, OR if client already has a status
+                  return !existingKeys.has(key) && !existingClientIds.has(cs.id);
+                });
+                
+                console.log(`Adding ${newStatuses.length} new statuses (filtered duplicates by callSid AND clientId)`);
+                console.log(`Existing statuses: ${prevStatuses.length}, New batch: ${initialStatuses.length}, After dedup: ${newStatuses.length}`);
                 return [...prevStatuses, ...newStatuses];
               });
 
-              // Start polling only for the first batch
+              // Start polling only for the first successful batch
               if (isFirstBatch) {
+                console.log('Starting polling for first successful batch');
                 startPolling();
                 isFirstBatch = false;
               }
+              
+              console.log(`Batch ${batchIndex + 1} processed successfully: ${data.data.callSids.length} calls`);
+              
+              // Show channel limit warnings if detected
+              if (data.data.channelLimitHits && data.data.channelLimitHits > 0) {
+                console.warn(`⚠️ Batch ${batchIndex + 1} hit channel limits ${data.data.channelLimitHits} times`);
+                
+                if (data.data.channelLimitHits >= 3) {
+                  toast({
+                    title: "⚠️ High Channel Limit Usage",
+                    description: `Batch ${batchIndex + 1} hit channel limits ${data.data.channelLimitHits} times. Consider upgrading your Telnyx plan.`,
+                    variant: "destructive"
+                  });
+                }
+              }
+              
+              // Show recommendations if provided
+              if (data.data.recommendations && data.data.recommendations.length > 0) {
+                console.log('📋 Backend recommendations:', data.data.recommendations);
+              }
+            } else {
+              console.error(`Batch ${batchIndex + 1} - Invalid response format:`, data);
+              totalFailedBatches++;
             }
-          } catch (error) {
-            console.error('Failed to parse JSON response:', error);
-            throw error;
+          } catch (parseError) {
+            console.error(`Batch ${batchIndex + 1} - Failed to parse JSON response:`, parseError);
+            totalFailedBatches++;
+            continue; // Continue to next batch
           }
+        } else {
+          console.error(`Batch ${batchIndex + 1} - Invalid content type:`, contentType);
+          totalFailedBatches++;
         }
+        
+      } catch (batchError) {
+        console.error(`Batch ${batchIndex + 1} failed:`, batchError);
+        totalFailedBatches++;
+        
+        // Mark this batch as failed but continue
+        const failedStatuses = chunk.map((client) => ({
+          id: client.id,
+          clientName: client.firstName + " " + client.lastName,
+          phone: formatPhoneNumber(client.phone),
+          callSid: `failed_batch_${batchIndex}_${client.id}`,
+          status: "failed" as const,
+          message: `Network error: ${batchError.message}`
+        }));
+        
+        console.log(`Adding ${failedStatuses.length} failed statuses for batch ${batchIndex + 1}`);
+        setCallStatuses(prevStatuses => {
+          const existingClientIds = new Set(prevStatuses.map(cs => cs.id));
+          const newFailedStatuses = failedStatuses.filter(cs => !existingClientIds.has(cs.id));
+          console.log(`Adding ${newFailedStatuses.length} failed statuses (filtered duplicates by clientId)`);
+          return [...prevStatuses, ...newFailedStatuses];
+        });
+        continue; // Continue to next batch
       }
+    }
 
-    } catch (error) {
-      console.error(error);
+    // Show summary of broadcast results
+    const totalBatches = clientChunks.length;
+    const successfulBatches = totalBatches - totalFailedBatches;
+    
+    if (totalFailedBatches > 0) {
       toast({
-        title: "Error",
-        description: "Failed to start calls",
-        variant: "destructive"
+        title: "Broadcast Partially Complete",
+        description: `${successfulBatches}/${totalBatches} batches successful. ${totalSuccessfulCalls} calls initiated. Note: Very conservative timing used due to channel limits.`,
+        variant: totalSuccessfulCalls > 0 ? "default" : "destructive"
       });
+    } else {
+      toast({
+        title: "Broadcast Started Successfully",
+        description: `All ${totalBatches} batches processed. ${totalSuccessfulCalls} calls initiated with conservative timing for channel limits.`,
+      });
+    }
+
+    // Only set error state if no calls were successful at all
+    if (totalSuccessfulCalls === 0) {
+      setIsBroadcasting(false);
       setStartTime(null);
       stopPolling();
     }
@@ -493,7 +634,8 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
       const response = await fetch(`${serverUrl}/api/cancel-all-calls`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
         }
       });
 
@@ -681,10 +823,10 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
             <div className="flex items-center justify-between mb-2">
               <h3 className="font-medium">Broadcast Progress</h3>
               <span className="text-sm text-gray-500">
-                {completedCalls + failedCalls} of {clientData.length} completed
+                {Math.min(completedCalls + failedCalls, clientData.length)} of {clientData.length} processed
               </span>
             </div>
-            <Progress value={(completedCalls + failedCalls) / clientData.length * 100} className="h-2" />
+            <Progress value={Math.min(((completedCalls + failedCalls) / clientData.length * 100), 100)} className="h-2" />
           </div>
           
           <div className="mb-6">
@@ -705,6 +847,26 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
             )}
           </div>
           
+          <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <div className="text-sm text-amber-800">
+              <strong>⚠️ Very Low Channel Limits Detected:</strong> Broadcasting uses very small batches (3 calls) with 20-second delays between batches and 5-second delays between individual calls. 
+              This is optimized for accounts with 1-2 concurrent call limits. Large campaigns will take significant time but ensure maximum success rate.
+            </div>
+          </div>
+
+          {/* Debug Information */}
+          {process.env.NODE_ENV === 'development' && (
+            <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs">
+              <div className="text-gray-700">
+                <strong>🐛 Debug Info:</strong><br/>
+                CallSids tracked: {callSids.length}<br/>
+                CallStatuses: {callStatuses.length}<br/>
+                IsBroadcasting: {isBroadcasting.toString()}<br/>
+                Polling active: {pollingIntervalRef.current ? 'Yes' : 'No'}
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col sm:flex-row gap-3">
             {isBroadcasting ? (
               <Button
@@ -740,7 +902,23 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
       <Card className="dashboard-card">
         <Tabs defaultValue="all">
           <div className="p-6">
-            <h2 className="text-xl font-bold mb-6">Call Status</h2>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold">Call Status</h2>
+              {isBroadcasting && callSids.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    console.log('🔄 Manual refresh triggered');
+                    pollCallStatus();
+                  }}
+                  className="gap-2"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Refresh
+                </Button>
+              )}
+            </div>
             
             <TabsList className="mb-4">
               <TabsTrigger value="all">All Calls</TabsTrigger>
@@ -757,14 +935,28 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
                       {getStatusIcon(call.status)}
                       <div className="ml-3 flex-1">
                         <div className="font-medium">{call.clientName}</div>
-                        <div className="text-sm text-gray-500">{call.phone}</div>
+                        <div className="text-sm text-gray-500">{displayPhoneNumber(call.phone)}</div>
                       </div>
                       {getStatusBadge(call.status)}
                     </div>
                   ))
                 ) : (
                   <div className="p-4 text-center text-gray-500">
-                    No call data available. Start broadcasting to see call statuses.
+                    {isBroadcasting ? (
+                      <div>
+                        <div className="mb-2">⏳ Broadcasting in progress...</div>
+                        <div className="text-sm">
+                          Call statuses will appear as batches are processed.
+                          {callSids.length > 0 && (
+                            <div className="mt-1">
+                              Tracking {callSids.length} calls, waiting for status updates...
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      "No call data available. Start broadcasting to see call statuses."
+                    )}
                   </div>
                 )}
               </div>
@@ -780,7 +972,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
                         <CheckCircle2 className="h-4 w-4 text-broadcast-green" />
                         <div className="ml-3 flex-1">
                           <div className="font-medium">{call.clientName}</div>
-                          <div className="text-sm text-gray-500">{call.phone}</div>
+                          <div className="text-sm text-gray-500">{displayPhoneNumber(call.phone)}</div>
                         </div>
                         {getStatusBadge(call.status)}
                       </div>
@@ -803,7 +995,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
                         <AlertTriangle className="h-4 w-4 text-broadcast-red" />
                         <div className="ml-3 flex-1">
                           <div className="font-medium">{call.clientName}</div>
-                          <div className="text-sm text-gray-500">{call.phone}</div>
+                          <div className="text-sm text-gray-500">{displayPhoneNumber(call.phone)}</div>
                           {call.message && (
                             <div className="text-xs text-broadcast-red">{call.message}</div>
                           )}
@@ -832,7 +1024,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
                         }
                         <div className="ml-3 flex-1">
                           <div className="font-medium">{call.clientName}</div>
-                          <div className="text-sm text-gray-500">{call.phone}</div>
+                          <div className="text-sm text-gray-500">{displayPhoneNumber(call.phone)}</div>
                         </div>
                         {call.status === "pending" ? 
                           <Badge variant="outline" className="text-gray-500">Pending</Badge> :
