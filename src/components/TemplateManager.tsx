@@ -39,20 +39,34 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({
   selectedTemplate,
   onTemplateSelected
 }) => {
-  const [templates, setTemplates] = useState<Template[]>([
-    {
-      id: "1",
-      name: "Default Message",
-      content: "Hello {firstName} {lastName}, this is a final procedural reminder regarding file number {fileNumber}. Action is required without delay. Contact 531-215-7299 immediately — that’s 531-215-7299. Reference file number {fileNumber}, again — file number {fileNumber}.",
-      createdAt: new Date(2023, 6, 15),
-      isDefault: true
+  const [templates, setTemplates] = useState<Template[]>(() => {
+    const savedTemplates = localStorage.getItem('templates');
+    if (savedTemplates) {
+      return JSON.parse(savedTemplates).map((t: any) => ({
+        ...t,
+        createdAt: new Date(t.createdAt)
+      }));
     }
-  ]);
+    return [
+      {
+        id: "1",
+        name: "Default Message",
+        content: "Hello {firstName} {lastName}, this is a final procedural reminder regarding file number {fileNumber}. Action is required without delay. Contact 531-215-7299 immediately — that's 531-215-7299. Reference file number {fileNumber}, again — file number {fileNumber}.",
+        createdAt: new Date(2023, 6, 15),
+        isDefault: true
+      }
+    ];
+  });
   
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({ name: "", content: "" });
   const [editingId, setEditingId] = useState<string | null>(null);
   const { toast } = useToast();
+  
+  // Save templates to localStorage whenever templates change
+  useEffect(() => {
+    localStorage.setItem('templates', JSON.stringify(templates));
+  }, [templates]);
   
   const handleCreateNew = () => {
     setFormData({ name: "", content: "" });

@@ -8,14 +8,13 @@ import "firebase/compat/firestore"
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "AIzaSyCst1R5C_Nbm4LfONZy_DW0JNXzlH3LL7U",
-  authDomain: "voiceagent-c8f98.firebaseapp.com",
-  databaseURL: "https://voiceagent-c8f98-default-rtdb.firebaseio.com",
-  projectId: "voiceagent-c8f98",
-  storageBucket: "voiceagent-c8f98.firebasestorage.app",
-  messagingSenderId: "905853488691",
-  appId: "1:905853488691:web:6f68e799b5f3232803dd46",
-  measurementId: "G-507J5FBX74"
+  apiKey: "AIzaSyCimygGJd3U7uAijoD1bQePBDlm6Luxpl8",
+  authDomain: "callservice-69520.firebaseapp.com",
+  projectId: "callservice-69520",
+  storageBucket: "callservice-69520.firebasestorage.app",
+  messagingSenderId: "1098179653505",
+  appId: "1:1098179653505:web:b47bdabc03d53869680280",
+  measurementId: "G-N47LS2Q583"
 };
 
 // Initialize Firebase

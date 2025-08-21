@@ -67,20 +67,37 @@ interface Template {
 
 const ScheduleBroadcasts: React.FC = () => {
   const [dataSets, setDataSets] = useState<DataSet[]>([]);
-  const [scheduleItems, setScheduleItems] = useState<BroadcastScheduleItem[]>([{
-    id: '1',
-    date: new Date(),
-    time: "09:00",
-    selectedDataSetId: null,
-    selectedTemplate: null
-  }]);
+  const [scheduleItems, setScheduleItems] = useState<BroadcastScheduleItem[]>(() => {
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    
+    // Round up to next 5-minute interval
+    const roundedMinute = Math.ceil(currentMinute / 5) * 5;
+    let timeString;
+    
+    if (roundedMinute >= 60) {
+      // If rounded minute is 60 or more, move to next hour
+      timeString = `${(currentHour + 1).toString().padStart(2, '0')}:00`;
+    } else {
+      timeString = `${currentHour.toString().padStart(2, '0')}:${roundedMinute.toString().padStart(2, '0')}`;
+    }
+    
+    return [{
+      id: '1',
+      date: new Date(),
+      time: timeString,
+      selectedDataSetId: null,
+      selectedTemplate: null
+    }];
+  });
   const [scheduledBroadcasts, setScheduledBroadcasts] = useState<ScheduledBroadcast[]>(() => {
     const saved = localStorage.getItem('scheduledBroadcasts');
     return saved ? JSON.parse(saved) : [];
   });
   const [currentTime, setCurrentTime] = useState(new Date());
   const { toast } = useToast();
-  const serverUrl = 'https://dft9oxen20o6ge-3000.proxy.runpod.net';
+  const serverUrl = 'https://inspired-touching-civet.ngrok-free.app';
 
   // Update current time every second
   useEffect(() => {
@@ -148,32 +165,33 @@ const ScheduleBroadcasts: React.FC = () => {
   };
 
   // Generate time slots for the select component
-  const generateTimeSlots = () => {
+  const generateTimeSlots = (selectedDate?: Date) => {
     const slots = [];
     const now = new Date();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
+    const isToday = selectedDate && 
+      selectedDate.getDate() === now.getDate() &&
+      selectedDate.getMonth() === now.getMonth() &&
+      selectedDate.getFullYear() === now.getFullYear();
     
-    // Generate all time slots
+    // Generate all time slots in chronological order with 5-minute precision
     for (let hour = 0; hour < 24; hour++) {
       for (let minute = 0; minute < 60; minute += 5) {
+        // Skip past time slots if it's today
+        if (isToday) {
+          const currentHour = now.getHours();
+          const currentMinute = now.getMinutes();
+          
+          if (hour < currentHour || (hour === currentHour && minute <= currentMinute)) {
+            continue; // Skip past time slots
+          }
+        }
+        
         const timeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
         slots.push(timeString);
       }
     }
 
-    // Sort slots to put closest time to current time first
-    slots.sort((a, b) => {
-      const [aHour, aMinute] = a.split(':').map(Number);
-      const [bHour, bMinute] = b.split(':').map(Number);
-      
-      const aDiff = Math.abs((aHour - currentHour) * 60 + (aMinute - currentMinute));
-      const bDiff = Math.abs((bHour - currentHour) * 60 + (bMinute - currentMinute));
-      
-      return aDiff - bDiff;
-    });
-
-    return slots;
+    return slots; // Return in chronological order, excluding past times for today
   };
 
   const getClosestTimeSlot = () => {
@@ -181,8 +199,13 @@ const ScheduleBroadcasts: React.FC = () => {
     const currentHour = now.getHours();
     const currentMinute = now.getMinutes();
     
-    // Round to nearest 5 minutes
-    const roundedMinute = Math.round(currentMinute / 5) * 5;
+    // Round up to next 5-minute interval
+    const roundedMinute = Math.ceil(currentMinute / 5) * 5;
+    
+    if (roundedMinute >= 60) {
+      // If rounded minute is 60 or more, move to next hour
+      return `${(currentHour + 1).toString().padStart(2, '0')}:00`;
+    }
     
     return `${currentHour.toString().padStart(2, '0')}:${roundedMinute.toString().padStart(2, '0')}`;
   };
@@ -197,25 +220,39 @@ const ScheduleBroadcasts: React.FC = () => {
     }]);
   };
 
-  // Update initial schedule item to use closest time
-  useEffect(() => {
-    setScheduleItems([{
-      id: Date.now().toString(),
-      date: new Date(),
-      time: getClosestTimeSlot(),
-      selectedDataSetId: null,
-      selectedTemplate: null
-    }]);
-  }, []);
+  // Initial schedule item now uses current time from state initialization
 
   const handleRemoveScheduleItem = (id: string) => {
     setScheduleItems(prev => prev.filter(item => item.id !== id));
   };
 
   const handleUpdateScheduleItem = (id: string, updates: Partial<BroadcastScheduleItem>) => {
-    setScheduleItems(prev => prev.map(item => 
-      item.id === id ? { ...item, ...updates } : item
-    ));
+    setScheduleItems(prev => prev.map(item => {
+      if (item.id !== id) return item;
+      
+      const updatedItem = { ...item, ...updates };
+      
+      // If date is being updated to today, check if selected time is in the past
+      if (updates.date) {
+        const now = new Date();
+        const isToday = updates.date.getDate() === now.getDate() &&
+          updates.date.getMonth() === now.getMonth() &&
+          updates.date.getFullYear() === now.getFullYear();
+        
+        if (isToday && updatedItem.time) {
+          const [hour, minute] = updatedItem.time.split(':').map(Number);
+          const selectedTime = hour * 60 + minute;
+          const currentTime = now.getHours() * 60 + now.getMinutes();
+          
+          // If selected time is in the past, update to next available time
+          if (selectedTime <= currentTime) {
+            updatedItem.time = getClosestTimeSlot();
+          }
+        }
+      }
+      
+      return updatedItem;
+    }));
   };
 
   const handleScheduleBroadcast = async () => {
@@ -234,7 +271,6 @@ const ScheduleBroadcasts: React.FC = () => {
 
     try {
       const broadcastsRef = collection(db, 'scheduledBroadcasts');
-      const newBroadcasts: ScheduledBroadcast[] = [];
       
       // Save each schedule to Firebase
       for (const item of scheduleItems) {
@@ -244,29 +280,17 @@ const ScheduleBroadcasts: React.FC = () => {
           date: Timestamp.fromDate(item.date!),
           time: item.time,
           template: item.selectedTemplate?.content,
+          templateName: item.selectedTemplate?.name || "Unknown",
           status: "scheduled",
           clientCount: dataSet?.data.length || 0,
           dataSetId: item.selectedDataSetId,
           createdAt: Timestamp.now()
         });
 
-        const newBroadcast: ScheduledBroadcast = {
-          id: docRef.id,
-          date: item.date!,
-          time: item.time,
-          template: item.selectedTemplate?.name || "Unknown",
-          status: "scheduled",
-          clientCount: dataSet?.data.length || 0,
-          dataSetId: item.selectedDataSetId!,
-          createdAt: new Date()
-        };
-
-        newBroadcasts.push(newBroadcast);
+        console.log(`✅ Broadcast scheduled with ID: ${docRef.id}`);
       }
 
-      // Update local state with all new broadcasts
-      setScheduledBroadcasts(prev => [...prev, ...newBroadcasts]);
-      
+      // Don't manually update local state - let the real-time listener handle it
       toast({
         title: "Broadcasts Scheduled",
         description: `Successfully scheduled ${scheduleItems.length} broadcasts`
@@ -276,7 +300,7 @@ const ScheduleBroadcasts: React.FC = () => {
       setScheduleItems([{
         id: Date.now().toString(),
         date: new Date(),
-        time: "09:00",
+        time: getClosestTimeSlot(),
         selectedDataSetId: null,
         selectedTemplate: null
       }]);
@@ -307,7 +331,7 @@ const ScheduleBroadcasts: React.FC = () => {
           id: doc.id,
           date: date,
           time: data.time,
-          template: data.template,
+          template: data.template || data.templateName || "Unknown Template", // Use template content for display
           status: data.status,
           clientCount: data.clientCount,
           dataSetId: data.dataSetId,
@@ -608,40 +632,66 @@ const ScheduleBroadcasts: React.FC = () => {
                   <div>
                     <h3 className="font-medium mb-3">Schedule {index + 1}</h3>
                     <div className="space-y-4">
-                      <Calendar
-                        mode="single"
-                        selected={item.date}
-                        onSelect={(date) => handleUpdateScheduleItem(item.id, { date })}
-                        className="rounded-md border"
-                        disabled={(date) => {
-                          const now = new Date();
-                          const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                          return date < today;
-                        }}
-                      />
+                      <div className="border rounded-lg p-3 bg-white shadow-sm flex justify-center">
+                        <Calendar
+                          mode="single"
+                          selected={item.date}
+                          onSelect={(date) => handleUpdateScheduleItem(item.id, { date })}
+                          className="w-fit mx-auto"
+                          classNames={{
+                            months: "flex flex-col space-y-3",
+                            month: "space-y-3",
+                            caption: "flex justify-center relative items-center pb-2",
+                            caption_label: "text-base font-medium",
+                            nav: "space-x-1 flex items-center",
+                            nav_button: "h-8 w-8 bg-transparent p-0 opacity-60 hover:opacity-100 hover:bg-gray-100 rounded-md",
+                            nav_button_previous: "absolute left-0",
+                            nav_button_next: "absolute right-0",
+                            table: "w-full border-collapse",
+                            head_row: "flex mb-1",
+                            head_cell: "text-gray-500 rounded-md w-8 h-8 font-medium text-xs flex items-center justify-center",
+                            row: "flex w-full",
+                            cell: "h-8 w-8 text-center text-sm p-0 relative hover:bg-gray-50 rounded-md",
+                            day: "h-8 w-8 p-0 font-normal hover:bg-gray-100 rounded-md transition-colors flex items-center justify-center text-sm",
+                            day_selected: "bg-blue-600 text-white hover:bg-blue-700 font-medium",
+                            day_today: "bg-gray-100 font-medium",
+                            day_outside: "text-gray-300",
+                            day_disabled: "text-gray-300 cursor-not-allowed",
+                          }}
+                          disabled={(date) => {
+                            const now = new Date();
+                            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                            return date < today;
+                          }}
+                        />
+                      </div>
                       <div className="flex items-center gap-2">
-                        <Select
-                          value={item.time}
-                          onValueChange={(time) => handleUpdateScheduleItem(item.id, { time })}
-                        >
-                          <SelectTrigger className="w-[180px]">
-                            <SelectValue placeholder="Select time" />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-[300px]">
-                            <div className="grid grid-cols-4 gap-1 p-2">
-                              {generateTimeSlots().map((time) => (
-                                <SelectItem 
-                                  key={time} 
-                                  value={time}
-                                  className="text-center py-1 px-2 hover:bg-gray-100 rounded cursor-pointer"
-                                >
-                                  {time}
-                                </SelectItem>
-                              ))}
-                            </div>
-                          </SelectContent>
-                        </Select>
-                        <span className="text-sm text-gray-500">(24-hour format)</span>
+                        <div className="space-y-2">
+                          <Select
+                            value={item.time}
+                            onValueChange={(time) => handleUpdateScheduleItem(item.id, { time })}
+                          >
+                            <SelectTrigger className="w-[180px]">
+                              <SelectValue placeholder="Select time" />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-[400px] w-[240px]">
+                              <div className="p-2">
+                                <div className="text-xs text-gray-500 mb-2 font-medium">Select Time (24-hour format)</div>
+                                <div className="max-h-[320px] overflow-y-auto">
+                                  {generateTimeSlots(item.date).map((time) => (
+                                    <SelectItem 
+                                      key={time} 
+                                      value={time}
+                                      className="text-sm py-1.5 px-2 hover:bg-gray-100 rounded cursor-pointer"
+                                    >
+                                      <span className="font-mono">{time}</span>
+                                    </SelectItem>
+                                  ))}
+                                </div>
+                              </div>
+                            </SelectContent>
+                          </Select>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -738,7 +788,11 @@ const ScheduleBroadcasts: React.FC = () => {
                           <TableCell>
                             {dataSets.find(d => d.id === schedule.dataSetId)?.name}
                           </TableCell>
-                          <TableCell>{schedule.template}</TableCell>
+                          <TableCell>
+                            <div className="max-w-xs truncate" title={schedule.template}>
+                              {schedule.template}
+                            </div>
+                          </TableCell>
                           <TableCell>
                             {schedule.clientCount} contacts
                           </TableCell>

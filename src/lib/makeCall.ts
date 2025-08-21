@@ -16,13 +16,14 @@ interface CallParams {
   campaign_id: string;
   ai_profile_name: string;
 }
-const serverUrl = 'https://dft9oxen20o6ge-3000.proxy.runpod.net';
+const serverUrl = 'https://inspired-touching-civet.ngrok-free.app';
 export const makeCall = async (params: CallParams) => {
   try {
     const response = await fetch(`${serverUrl}/api/make-call`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true'
       },
       body: JSON.stringify(params),
     });

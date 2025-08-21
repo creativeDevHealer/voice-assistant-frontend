@@ -29,7 +29,7 @@ interface ScheduledBroadcast {
 
 export const BroadcastScheduler = () => {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const serverUrl = 'https://dft9oxen20o6ge-3000.proxy.runpod.net';
+  const serverUrl = 'https://inspired-touching-civet.ngrok-free.app';
 
   // Function to get dataset from localStorage
   const getDatasetFromLocalStorage = (datasetId: string): DataSet | null => {
@@ -77,20 +77,26 @@ export const BroadcastScheduler = () => {
           const response = await fetch(`${serverUrl}/api/call-status/${callSid}`, {
             method: 'POST',
             headers: {
-              'Accept': 'application/json'
+              'Accept': 'application/json',
+              'ngrok-skip-browser-warning': 'true'
             }
           });
 
           if (!response.ok) continue;
 
           const data = await response.json();
-          const status = data.data.status;
+          const status = data.data?.status;
           console.log(`Call ${callSid} status:`, status);
 
           if (status === "completed" || status === "voicemail" || status === "answered" || status === "busy") {
             completedCount++;
           } else if (status === "failed" || status === "no-answer" || status === "canceled") {
             failedCount++;
+          } else if (status === "pending" || status === "ringing" || status === "initiated") {
+            // Still in progress, don't count yet
+            console.log(`Call ${callSid} still in progress with status: ${status}`);
+          } else {
+            console.warn(`Unknown call status for ${callSid}: ${status}`);
           }
         } catch (error) {
           console.error(`Error checking status for callSid ${callSid}:`, error);
@@ -107,15 +113,15 @@ export const BroadcastScheduler = () => {
       console.log(`Updated broadcast ${broadcastId} - Completed: ${completedCount}, Failed: ${failedCount}`);
 
       // If all calls are completed or failed, update status to completed
-      if (completedCount + failedCount === callSids.length) {
+      if (completedCount + failedCount === callSids.length && callSids.length > 0) {
         await updateDoc(broadcastRef, {
           status: 'completed',
-          lastUpdated: Timestamp.now()
+          lastUpdated: Timestamp.now(),
+          completedAt: Timestamp.now()
         });
-        console.log(`Broadcast ${broadcastId} completed`);
-
-        // removeCompletedDataSet(broadcastId);
-        localStorage.removeItem('scheduledBroadcasts');
+        console.log(`Broadcast ${broadcastId} completed - Total: ${callSids.length}, Completed: ${completedCount}, Failed: ${failedCount}`);
+      } else {
+        console.log(`Broadcast ${broadcastId} still in progress - Total: ${callSids.length}, Completed: ${completedCount}, Failed: ${failedCount}, Remaining: ${callSids.length - completedCount - failedCount}`);
       }
     } catch (error) {
       console.error('Error checking call statuses:', error);
@@ -146,7 +152,7 @@ export const BroadcastScheduler = () => {
     };
 
     // Check every 30 seconds
-    const interval = setInterval(checkInProgressBroadcasts, 60000);
+    const interval = setInterval(checkInProgressBroadcasts, 30000);
 
     // Initial check
     checkInProgressBroadcasts();
@@ -251,8 +257,8 @@ export const BroadcastScheduler = () => {
                 throw new Error('No valid contacts found in dataset');
               }
 
-              const batchSize = 50;
-              // Process contacts in chunks of 10
+              const batchSize = 5;
+              // Process contacts in small chunks for channel limit optimization
               function chunkArray(array, size) {
                 const result = [];
                 for (let i = 0; i < array.length; i += size) {
@@ -267,10 +273,11 @@ export const BroadcastScheduler = () => {
         
               function personalizeTemplate(template: string, client: any) {
                 return template
-                  .replace(/\{firstName\}/g, client.firstName || '')
-                  .replace(/\{lastName\}/g, client.lastName || '')
-                  .replace(/\{fileNumber\}/g, client.fileNumber || '')
-                  .replace(/\{phoneNumber\}/g, client.phone || '');
+                  .replace(/\{firstName\}/g, client.firstName || client.FirstName || '')
+                  .replace(/\{lastName\}/g, client.lastName || client.LastName || '')
+                  .replace(/\{fileNumber\}/g, client.fileNumber || client.FileNumber || client.id || '')
+                  .replace(/\{phoneNumber\}/g, client.phone || client.Phone || '')
+                  .replace(/\{name\}/g, `${client.firstName || client.FirstName || ''} ${client.lastName || client.LastName || ''}`.trim());
               }
               
               console.log("clientChunks", clientChunks);
@@ -279,16 +286,19 @@ export const BroadcastScheduler = () => {
                 try {
                   console.log("isFirstBatch", isFirstBatch);
                   if (!isFirstBatch) {
-                    await delay(1000); // 1 second delay between batches
+                    await delay(20000); // 20 second delay between batches for channel limits
                   }
                   
                   console.log("chunk", chunk);
                   // Validate and format phone numbers
                   const validChunk = chunk.filter(client => {
-                    const phone = client.phone;
-                    const isValid = phone !== undefined && phone !== null && phone !== 0;
+                    const phone = client.phone || client.Phone || client.phoneNumber || client.PhoneNumber;
+                    const isValid = phone !== undefined && phone !== null && phone !== 0 && phone !== '';
                     if (!isValid) {
                       console.warn(`Invalid phone number for client:`, client);
+                    } else {
+                      // Normalize phone field for consistent access
+                      client.phone = phone;
                     }
                     return isValid;
                   });
@@ -300,28 +310,35 @@ export const BroadcastScheduler = () => {
 
                   console.log("Valid chunk:", validChunk);
                   
+                  // Helper function to format phone number with +1 prefix
+                  const formatPhoneNumber = (phone: string): string => {
+                    if (!phone) return phone;
+                    const cleanPhone = phone.toString().replace(/\D/g, '');
+                    if (cleanPhone.startsWith('1') && cleanPhone.length === 11) {
+                      return '+' + cleanPhone;
+                    }
+                    if (cleanPhone.length === 10) {
+                      return '+1' + cleanPhone;
+                    }
+                    if (phone.startsWith('+')) {
+                      return phone;
+                    }
+                    return '+1' + cleanPhone;
+                  };
+                  
                   const response = await makeApiCall(`${serverUrl}/api/make-call`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                      'Content-Type': 'application/json',
+                      'ngrok-skip-browser-warning': 'true'
+                    },
                     body: JSON.stringify({
-                      phonenumber: validChunk.map(client => client.phone).join(','),
-                      contact_id: validChunk.map(client => client.fileNumber?.toString() || '').join(','),
+                      phonenumber: validChunk.map(client => formatPhoneNumber(client.phone)).join(','),
+                      contact_id: validChunk.map(client => client.fileNumber?.toString() || client.id?.toString() || '').join(','),
                       contact_name: validChunk.map(client => 
                         `${client.firstName || ''} ${client.lastName || ''}`.trim()
                       ).join(','),
-                      email: validChunk.map(client => client.email || '').join(','),
-                      contact_company: validChunk.map(client => client.company || '').join(','),
-                      contact_position: validChunk.map(client => client.position || '').join(','),
-                      empresa: "",
-                      voiceId: "21m00Tcm4TlvDq8ikWAM",
-                      stability: 90,
-                      similarity_boost: 20,
-                      style_exaggeration: 10,
-                      content: validChunk.map(client => personalizeTemplate(broadcast.template, client)).join(','),
-                      todo: "",
-                      notodo: "",
-                      campaign_id: broadcast.id || "",
-                      ai_profile_name: ""
+                      content: validChunk.map(client => personalizeTemplate(broadcast.template, client))
                     })
                   });
 
@@ -360,7 +377,8 @@ export const BroadcastScheduler = () => {
               // Update broadcast status to failed
               await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
                 status: 'failed',
-                lastUpdated: Timestamp.now()
+                lastUpdated: Timestamp.now(),
+                error: error instanceof Error ? error.message : 'Unknown error occurred'
               });
             }
           }
@@ -374,8 +392,8 @@ export const BroadcastScheduler = () => {
   };
 
   useEffect(() => {
-    // Check every minute
-    timerRef.current = setInterval(checkScheduledBroadcasts, 60000);
+    // Check every 30 seconds for better scheduling precision
+    timerRef.current = setInterval(checkScheduledBroadcasts, 30000);
 
     // Initial check
     checkScheduledBroadcasts();
