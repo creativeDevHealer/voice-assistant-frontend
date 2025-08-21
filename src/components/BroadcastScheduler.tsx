@@ -257,7 +257,7 @@ export const BroadcastScheduler = () => {
                 throw new Error('No valid contacts found in dataset');
               }
 
-              const batchSize = 5;
+              const batchSize = 8; // Optimized for 10 concurrent call limit
               // Process contacts in small chunks for channel limit optimization
               function chunkArray(array, size) {
                 const result = [];
@@ -286,7 +286,7 @@ export const BroadcastScheduler = () => {
                 try {
                   console.log("isFirstBatch", isFirstBatch);
                   if (!isFirstBatch) {
-                    await delay(20000); // 20 second delay between batches for channel limits
+                    await delay(2000); // 2 second delay between batches for 10 concurrent call limit
                   }
                   
                   console.log("chunk", chunk);

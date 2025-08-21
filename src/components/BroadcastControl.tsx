@@ -261,7 +261,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     return result;
   }
 
-  const batchSize = 5; // Very small batches for very low channel limits
+  const batchSize = 8; // Optimized for 10 concurrent call limit
   const RETRY_DELAY = 2000;
 
   // Add delay function
@@ -420,9 +420,9 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
       const chunk = clientChunks[batchIndex];
       
       try {
-        // Add longer delay between batches to respect channel limits
+        // Reduced delay between batches for 10 concurrent call limit
         if (!isFirstBatch) {
-          await delay(5000); // 5 second delay between batches
+          await delay(2000); // 2 second delay between batches
         }
         
         console.log(`Processing batch ${batchIndex + 1}/${clientChunks.length} with ${chunk.length} calls`);
@@ -599,13 +599,13 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     if (totalFailedBatches > 0) {
       toast({
         title: "Broadcast Partially Complete",
-        description: `${successfulBatches}/${totalBatches} batches successful. ${totalSuccessfulCalls} calls initiated. Note: Very conservative timing used due to channel limits.`,
+        description: `${successfulBatches}/${totalBatches} batches successful. ${totalSuccessfulCalls} calls initiated with optimized timing for 10 concurrent calls.`,
         variant: totalSuccessfulCalls > 0 ? "default" : "destructive"
       });
     } else {
       toast({
         title: "Broadcast Started Successfully",
-        description: `All ${totalBatches} batches processed. ${totalSuccessfulCalls} calls initiated with conservative timing for channel limits.`,
+        description: `All ${totalBatches} batches processed. ${totalSuccessfulCalls} calls initiated with optimized timing for 10 concurrent calls.`,
       });
     }
 
@@ -847,10 +847,10 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
             )}
           </div>
           
-          <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-            <div className="text-sm text-amber-800">
-              <strong>⚠️ Very Low Channel Limits Detected:</strong> Broadcasting uses very small batches (3 calls) with 20-second delays between batches and 5-second delays between individual calls. 
-              This is optimized for accounts with 1-2 concurrent call limits. Large campaigns will take significant time but ensure maximum success rate.
+          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="text-sm text-blue-800">
+              <strong>📞 Optimized for 10 Concurrent Calls:</strong> Broadcasting uses batches of 8 calls with 2-second delays between batches. 
+              This is optimized for standard Telnyx accounts with higher concurrent call limits for faster campaign execution.
             </div>
           </div>
 
