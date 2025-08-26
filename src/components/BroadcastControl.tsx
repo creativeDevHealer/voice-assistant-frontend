@@ -50,6 +50,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   const [completedCalls, setCompletedCalls] = useState(0);
   const [failedCalls, setFailedCalls] = useState(0);
   const [callSids, setCallSids] = useState<string[]>([]);
+  const [broadcastId, setBroadcastId] = useState<string | null>(null);
   const [startTime, setStartTime] = useState<Date | null>(null);
   const [duration, setDuration] = useState<string>("00:00:00");
   const callSidsRef = useRef(callSids);
@@ -215,6 +216,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
       setCompletedCalls(state.completedCalls);
       setFailedCalls(state.failedCalls);
       setCallSids(state.callSids);
+      setBroadcastId(state.broadcastId);
       setCallStatuses(state.callStatuses);
       setStartTime(state.startTime ? new Date(state.startTime) : null);
       setCurrentProgress(state.currentProgress);
@@ -235,12 +237,13 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
       completedCalls,
       failedCalls,
       callSids,
+      broadcastId,
       callStatuses,
       startTime: startTime?.toISOString(),
       currentProgress
     };
     localStorage.setItem('broadcastState', JSON.stringify(state));
-  }, [isBroadcasting, completedCalls, failedCalls, callSids, callStatuses, startTime, currentProgress]);
+  }, [isBroadcasting, completedCalls, failedCalls, callSids, broadcastId, callStatuses, startTime, currentProgress]);
 
 
 
@@ -404,6 +407,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     setCompletedCalls(0);
     setFailedCalls(0);
     setCallSids([]);
+    setBroadcastId(null);
     setCallStatuses([]);
     setCurrentProgress(0);
     setStartTime(new Date());
@@ -475,6 +479,12 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
             if (data.success && data.data && data.data.callSids) {
               setCallSids(prev => [...prev, ...data.data.callSids]);
               totalSuccessfulCalls += data.data.callSids.length;
+              
+              // Store broadcastId from the first successful batch
+              if (data.data.broadcastId && !broadcastId) {
+                setBroadcastId(data.data.broadcastId);
+                console.log(`📡 Broadcast ID set: ${data.data.broadcastId}`);
+              }
               
               console.log(`Batch ${batchIndex + 1} - Chunk size: ${chunk.length}, CallSids received: ${data.data.callSids.length}`);
               console.log(`CallSids:`, data.data.callSids);
@@ -620,6 +630,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   const pauseBroadcast = () => {
     setIsBroadcasting(false);
     setStartTime(null);
+    setBroadcastId(null);
     stopPolling();
     resetCounters();
     localStorage.removeItem('broadcastState'); // Clear saved state when pausing
@@ -636,7 +647,10 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
         headers: {
           'Content-Type': 'application/json',
           'ngrok-skip-browser-warning': 'true'
-        }
+        },
+        body: JSON.stringify({
+          broadcastId: broadcastId
+        })
       });
 
       if (!response.ok) {
@@ -654,6 +668,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
       setCompletedCalls(0);
       setFailedCalls(0);
       setCallSids([]);
+      setBroadcastId(null);
       setCallStatuses([]);
       stopPolling();
       localStorage.removeItem('broadcastState'); // Clear saved state when canceling
