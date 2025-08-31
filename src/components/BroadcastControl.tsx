@@ -57,7 +57,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   const [retryCount, setRetryCount] = useState(0);
   // const [serverUrl, setServerUrl] = useState('https://dft9oxen20o6ge-3000.proxy.runpod.net');
   // const [serverUrl, setServerUrl] = useState('http://localhost:3000');
-  const [serverUrl, setServerUrl] = useState('https://inspired-touching-civet.ngrok-free.app');
+  const [serverUrl, setServerUrl] = useState('https://mole-creative-reptile.ngrok-free.app');
   // const [serverUrl, setServerUrl] = useState('https://debd-74-80-151-196.ngrok-free.app');
   const MAX_RETRIES = 3;
   
@@ -264,8 +264,11 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     return result;
   }
 
-  const batchSize = 8; // Optimized for 10 concurrent call limit
-  const RETRY_DELAY = 2000;
+  const batchSize = 10; // Optimized to use full 10 concurrent call limit
+  const RETRY_DELAY = 1000; // Reduced from 2000ms for faster retries
+  const MAX_CONCURRENT_BATCHES = 3; // Allow multiple batches to run concurrently
+  const BATCH_DELAY = 1000; // Reduced from 2000ms for faster processing
+  const ADAPTIVE_DELAY_MULTIPLIER = 1.5; // Multiplier for increasing delay on failure
 
   // Add delay function
   const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -412,7 +415,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     setCurrentProgress(0);
     setStartTime(new Date());
     
-    console.log("Starting new broadcast - Reset counters to 0");
+    console.log(`🚀 Starting PARALLEL broadcast for ${clientData.length} contacts with ${batchSize} calls per batch`);
 
     // Process all clients in batches with resilient error handling
     const clientChunks = chunkArray(clientData, batchSize);
