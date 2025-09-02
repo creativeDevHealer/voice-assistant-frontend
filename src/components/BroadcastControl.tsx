@@ -149,7 +149,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
             setCurrentProgress(prev => {
               const newProgress = ((completedCalls + failedCalls + 1) / clientData.length) * 100;
               console.log("New progress:", newProgress);
-              return newProgress;
+              return Math.min(newProgress, 100); // Ensure progress doesn't exceed 100%
             });
           } else if (data.data.status === "failed" || data.data.status === "no-answer" || data.data.status === "busy" || data.data.status === "canceled") {
             console.log("Call failed:", callSid);
@@ -164,7 +164,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
             setCurrentProgress(prev => {
               const newProgress = ((completedCalls + failedCalls + 1) / clientData.length) * 100;
               console.log("New progress:", newProgress);
-              return newProgress;
+              return Math.min(newProgress, 100); // Ensure progress doesn't exceed 100%
             });
           }
 
@@ -264,7 +264,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     return result;
   }
 
-  const batchSize = 10; // Optimized to use full 10 concurrent call limit
+  const batchSize = 8; // Reduced to avoid channel capacity issues
   const RETRY_DELAY = 1000; // Reduced from 2000ms for faster retries
   const MAX_CONCURRENT_BATCHES = 3; // Allow multiple batches to run concurrently
   const BATCH_DELAY = 1000; // Reduced from 2000ms for faster processing
@@ -352,7 +352,8 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
 
     setCompletedCalls(completedStatusCount);
     setFailedCalls(failedStatusCount);
-    setCurrentProgress(((completedStatusCount + failedStatusCount) / clientData.length) * 100);
+    const progress = clientData.length > 0 ? ((completedStatusCount + failedStatusCount) / clientData.length) * 100 : 0;
+    setCurrentProgress(Math.min(progress, 100)); // Ensure progress doesn't exceed 100%
   };
 
   // Add effect to sync counters when callStatuses changes

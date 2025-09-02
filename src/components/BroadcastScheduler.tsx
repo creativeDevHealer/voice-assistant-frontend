@@ -257,7 +257,7 @@ export const BroadcastScheduler = () => {
                 throw new Error('No valid contacts found in dataset');
               }
 
-              const batchSize = 10; // Optimized for PARALLEL processing with 10 concurrent call limit
+              const batchSize = 8; // Reduced to avoid channel capacity issues
               // Process contacts in small chunks for channel limit optimization
               function chunkArray(array, size) {
                 const result = [];
