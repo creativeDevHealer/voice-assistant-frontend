@@ -51,7 +51,7 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({
       {
         id: "1",
         name: "Default Message",
-        content: "Hello {firstName} {lastName}, this is a final procedural reminder regarding file number {fileNumber}. Action is required without delay. Contact 531-215-7299 immediately — that's 531-215-7299. Reference file number {fileNumber}, again — file number {fileNumber}.",
+        content: "Hello {firstName} {lastName}, this is a final procedural reminder regarding file number {fileNumber}. Action is required without delay. Contact 501-585-5834 immediately — that's 501-585-5834. Reference file number {fileNumber}, again — file number {fileNumber}.",
         createdAt: new Date(2023, 6, 15),
         isDefault: true
       }
