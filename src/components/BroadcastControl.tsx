@@ -57,7 +57,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   const [retryCount, setRetryCount] = useState(0);
   // const [serverUrl, setServerUrl] = useState('https://dft9oxen20o6ge-3000.proxy.runpod.net');
   // const [serverUrl, setServerUrl] = useState('http://localhost:3000');
-  const [serverUrl, setServerUrl] = useState('https://jennie-conceptive-uncomprehendingly.ngrok-free.app');
+  const [serverUrl, setServerUrl] = useState('https://unaccusingly-gristlier-raymon.ngrok-free.app');
   // const [serverUrl, setServerUrl] = useState('https://debd-74-80-151-196.ngrok-free.app');
   const MAX_RETRIES = 3;
   
