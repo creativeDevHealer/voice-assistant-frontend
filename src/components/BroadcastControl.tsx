@@ -61,6 +61,12 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   // const [serverUrl, setServerUrl] = useState('https://debd-74-80-151-196.ngrok-free.app');
   const MAX_RETRIES = 3;
   
+  // Last call timeout tracking
+  const [lastCallTimeoutId, setLastCallTimeoutId] = useState<NodeJS.Timeout | null>(null);
+  const [lastCallStartTime, setLastCallStartTime] = useState<number | null>(null);
+  const [isLastCallTimingOut, setIsLastCallTimingOut] = useState(false);
+  const [timeoutCountdown, setTimeoutCountdown] = useState<number>(0);
+  
   const { toast } = useToast();
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -200,12 +206,76 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     }
   };
 
+  // Function to check for last call and start timeout timer
+  const checkLastCallTimeout = () => {
+    if (!isBroadcasting) return;
+
+    // Check if only one call remains using completed + failed counts
+    const processedCalls = completedCalls + failedCalls;
+    const isLastCall = processedCalls === clientData.length - 1;
+
+    if (isLastCall) {
+      const currentTime = Date.now();
+      
+      // If we don't have a timeout timer running yet, start one
+      if (!lastCallTimeoutId && !isLastCallTimingOut) {
+        console.log(`⏰ Only one call remaining (${processedCalls + 1}/${clientData.length}). Starting 3-minute timeout timer.`);
+        
+        setIsLastCallTimingOut(true);
+        setLastCallStartTime(currentTime);
+        
+        // Set a 3-minute timeout
+        const timeoutId = setTimeout(() => {
+          console.log(`⏰ 3-minute timeout reached for last call. Force completing.`);
+          
+          // Force complete by incrementing completed count
+          setCompletedCalls(prev => prev + 1);
+          
+          // Remove any remaining callSids (should be just one)
+          setCallSids(prev => {
+            const remaining = prev.slice(0, -1); // Remove last one
+            return remaining;
+          });
+          
+          // Show notification
+          toast({
+            title: "Broadcast Completed",
+            variant: "default"
+          });
+          
+          // Clean up timeout state
+          setLastCallTimeoutId(null);
+          setIsLastCallTimingOut(false);
+          setLastCallStartTime(null);
+          setTimeoutCountdown(0);
+          
+        }, 2 * 60 * 1000); // 2 minutes
+        
+        setLastCallTimeoutId(timeoutId);
+      }
+    } else {
+      // Multiple calls still active, clear any existing timeout
+      if (lastCallTimeoutId) {
+        console.log(`Multiple calls still active (${processedCalls}/${clientData.length}), clearing last call timeout timer`);
+        clearTimeout(lastCallTimeoutId);
+        setLastCallTimeoutId(null);
+        setIsLastCallTimingOut(false);
+        setLastCallStartTime(null);
+        setTimeoutCountdown(0);
+      }
+    }
+  };
+
   // Remove unnecessary effect logging
   useEffect(() => {
     return () => {
       stopPolling();
+      // Clean up last call timeout
+      if (lastCallTimeoutId) {
+        clearTimeout(lastCallTimeoutId);
+      }
     };
-  }, []);
+  }, [lastCallTimeoutId]);
 
   // Load broadcast state from localStorage on mount
   useEffect(() => {
@@ -220,6 +290,8 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
       setCallStatuses(state.callStatuses);
       setStartTime(state.startTime ? new Date(state.startTime) : null);
       setCurrentProgress(state.currentProgress);
+      setLastCallStartTime(state.lastCallStartTime);
+      setIsLastCallTimingOut(state.isLastCallTimingOut);
       
       // Resume polling if broadcast was active
       if (state.isBroadcasting) {
@@ -240,10 +312,12 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
       broadcastId,
       callStatuses,
       startTime: startTime?.toISOString(),
-      currentProgress
+      currentProgress,
+      lastCallStartTime,
+      isLastCallTimingOut
     };
     localStorage.setItem('broadcastState', JSON.stringify(state));
-  }, [isBroadcasting, completedCalls, failedCalls, callSids, broadcastId, callStatuses, startTime, currentProgress]);
+  }, [isBroadcasting, completedCalls, failedCalls, callSids, broadcastId, callStatuses, startTime, currentProgress, lastCallStartTime, isLastCallTimingOut]);
 
 
 
@@ -360,6 +434,34 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   useEffect(() => {
     resetCounters();
   }, [callStatuses]);
+
+  // Check for last call timeout whenever counts change
+  useEffect(() => {
+    checkLastCallTimeout();
+  }, [completedCalls, failedCalls, clientData.length, isBroadcasting]);
+
+  // Countdown timer for last call timeout
+  useEffect(() => {
+    let countdownInterval: NodeJS.Timeout;
+    
+    if (isLastCallTimingOut && lastCallStartTime) {
+      countdownInterval = setInterval(() => {
+        const elapsed = Date.now() - lastCallStartTime;
+        const remaining = Math.max(0, 3 * 60 * 1000 - elapsed);
+        setTimeoutCountdown(Math.ceil(remaining / 1000));
+        
+        if (remaining <= 0) {
+          setTimeoutCountdown(0);
+        }
+      }, 1000);
+    }
+    
+    return () => {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+      }
+    };
+  }, [isLastCallTimingOut, lastCallStartTime]);
 
   useEffect(() => {
     // Update counts based on callStatuses
@@ -636,6 +738,16 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     setStartTime(null);
     setBroadcastId(null);
     stopPolling();
+    
+    // Clean up last call timeout
+    if (lastCallTimeoutId) {
+      clearTimeout(lastCallTimeoutId);
+      setLastCallTimeoutId(null);
+      setIsLastCallTimingOut(false);
+      setLastCallStartTime(null);
+      setTimeoutCountdown(0);
+    }
+    
     resetCounters();
     localStorage.removeItem('broadcastState'); // Clear saved state when pausing
     toast({
@@ -675,6 +787,16 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
       setBroadcastId(null);
       setCallStatuses([]);
       stopPolling();
+      
+      // Clean up last call timeout
+      if (lastCallTimeoutId) {
+        clearTimeout(lastCallTimeoutId);
+        setLastCallTimeoutId(null);
+        setIsLastCallTimingOut(false);
+        setLastCallStartTime(null);
+        setTimeoutCountdown(0);
+      }
+      
       localStorage.removeItem('broadcastState'); // Clear saved state when canceling
     } catch (error) {
       console.error('Error canceling calls:', error);
