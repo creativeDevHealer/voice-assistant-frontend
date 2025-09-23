@@ -56,7 +56,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   const callSidsRef = useRef(callSids);
   const [retryCount, setRetryCount] = useState(0);
   // const [serverUrl, setServerUrl] = useState('https://dft9oxen20o6ge-3000.proxy.runpod.net');
-  // const [serverUrl, setServerUrl] = useState('http://localhost:3000');
+  // const [serverUrl, setServerUrl] = useState('http://localhost:5000');
   const [serverUrl, setServerUrl] = useState('http://35.88.71.8:5000');
   // const [serverUrl, setServerUrl] = useState('https://debd-74-80-151-196.ngrok-free.app');
   const MAX_RETRIES = 3;
@@ -72,7 +72,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    callSidsRef.current = callSids;0
+    callSidsRef.current = callSids;
   }, [callSids]);
 
   // Function to check if response is an ngrok error page
@@ -229,11 +229,33 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
           console.log(`⏰ 3-minute timeout reached for last call. Force completing.`);
           
           // Force complete by incrementing completed count
-          setCompletedCalls(prev => prev + 1);
+          setCompletedCalls(prev => {
+            const newCompleted = prev + 1;
+            console.log(`Force completing last call. Updated completed count to: ${newCompleted}`);
+            return newCompleted;
+          });
+          
+          // Also update callStatuses to trigger broadcast completion logic
+          setCallStatuses(prevStatuses => {
+            // Find the last pending call and mark it as completed
+            const updatedStatuses = prevStatuses.map(call => {
+              if (['pending', 'ringing', 'answered'].includes(call.status)) {
+                console.log(`Force completing call in statuses: ${call.clientName} (${call.phone})`);
+                return {
+                  ...call,
+                  status: 'completed' as const,
+                  message: 'Force completed after 2-minute timeout'
+                };
+              }
+              return call;
+            });
+            return updatedStatuses;
+          });
           
           // Remove any remaining callSids (should be just one)
           setCallSids(prev => {
             const remaining = prev.slice(0, -1); // Remove last one
+            console.log(`Removed last callSid. Remaining callSids: ${remaining.length}`);
             return remaining;
           });
           
@@ -340,9 +362,6 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
 
   const batchSize = 8; // Reduced to avoid channel capacity issues
   const RETRY_DELAY = 1000; // Reduced from 2000ms for faster retries
-  const MAX_CONCURRENT_BATCHES = 3; // Allow multiple batches to run concurrently
-  const BATCH_DELAY = 1000; // Reduced from 2000ms for faster processing
-  const ADAPTIVE_DELAY_MULTIPLIER = 1.5; // Multiplier for increasing delay on failure
 
   // Add delay function
   const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
