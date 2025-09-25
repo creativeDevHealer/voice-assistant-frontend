@@ -39,6 +39,7 @@ interface ScheduledBroadcast {
   date: Date;
   time: string;
   template: string;
+  templateName?: string;
   status: "scheduled" | "completed" | "cancelled" | "in-progress";
   clientCount: number;
   dataSetId: string;
@@ -46,6 +47,7 @@ interface ScheduledBroadcast {
   completedCalls?: number;
   failedCalls?: number;
   lastUpdated?: Date;
+  completedAt?: Date;
   createdAt: Date;
 }
 
@@ -432,6 +434,7 @@ const ScheduleBroadcasts: React.FC = () => {
     }
   };
 
+
   const handleRemoveDataset = (datasetId: string) => {
     // Remove from state
     setDataSets(prev => prev.filter(ds => ds.id !== datasetId));
@@ -697,12 +700,14 @@ const ScheduleBroadcasts: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Date & Time</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Time</TableHead>
                     <TableHead>Dataset</TableHead>
                     <TableHead>Template</TableHead>
                     <TableHead>Contacts</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Calls</TableHead>
+                    <TableHead>Duration</TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -714,18 +719,65 @@ const ScheduleBroadcasts: React.FC = () => {
                       return (
                         <TableRow key={`${schedule.id}-${date.getTime()}-${schedule.time}-${createdAt.getTime()}`}>
                           <TableCell>
-                            {format(date, 'PPP')} at {schedule.time}
-                          </TableCell>
-                          <TableCell>
-                            {dataSets.find(d => d.id === schedule.dataSetId)?.name}
-                          </TableCell>
-                          <TableCell>
-                            <div className="max-w-xs truncate" title={schedule.template}>
-                              {schedule.template}
+                            <div className="font-medium">
+                              {format(date, 'PPP')}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {format(date, 'EEEE')}
                             </div>
                           </TableCell>
                           <TableCell>
-                            {schedule.clientCount} contacts
+                            <div className="font-mono text-lg font-semibold text-blue-600">
+                              {schedule.time}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {schedule.time && schedule.time.includes(':') ? 
+                                (() => {
+                                  const [hours, minutes] = schedule.time.split(':').map(Number);
+                                  const dateTime = new Date(date);
+                                  dateTime.setHours(hours, minutes, 0);
+                                  const now = new Date();
+                                  const diff = dateTime.getTime() - now.getTime();
+                                  if (diff > 0) {
+                                    const hoursLeft = Math.floor(diff / (1000 * 60 * 60));
+                                    const minutesLeft = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                                    if (hoursLeft > 0) {
+                                      return `${hoursLeft}h ${minutesLeft}m left`;
+                                    } else {
+                                      return `${minutesLeft}m left`;
+                                    }
+                                  } else {
+                                    return 'Past due';
+                                  }
+                                })() : ''
+                              }
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="font-medium">
+                              {dataSets.find(d => d.id === schedule.dataSetId)?.name || 'Unknown Dataset'}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              ID: {schedule.dataSetId}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="max-w-xs truncate" title={schedule.template}>
+                              <div className="font-medium text-sm">
+                                {schedule.templateName || 'Template'}
+                              </div>
+                              <div className="text-xs text-gray-500 truncate">
+                                {schedule.template}
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="font-semibold text-lg">
+                              {schedule.clientCount}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              contacts
+                            </div>
                           </TableCell>
                           <TableCell>
                             <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
@@ -738,7 +790,97 @@ const ScheduleBroadcasts: React.FC = () => {
                             </span>
                           </TableCell>
                           <TableCell>
-                            Completed: {schedule.completedCalls || 0} Failed: {schedule.failedCalls || 0}
+                            <div className="text-sm">
+                              <div className="text-green-600 font-medium">
+                                ✓ {schedule.completedCalls || 0}
+                              </div>
+                              <div className="text-red-600 font-medium">
+                                ✗ {schedule.failedCalls || 0}
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            {(() => {
+                              // Calculate duration based on status
+                              if (schedule.status === 'completed') {
+                                // For completed broadcasts, try multiple timestamp sources
+                                let endTime = null;
+                                
+                                // Try completedAt first
+                                if (schedule.completedAt) {
+                                  endTime = schedule.completedAt instanceof Date ? schedule.completedAt : new Date(schedule.completedAt);
+                                }
+                                
+                                // Fall back to lastUpdated if completedAt is not available or invalid
+                                if (!endTime || endTime.getTime() <= 0) {
+                                  if (schedule.lastUpdated) {
+                                    endTime = schedule.lastUpdated instanceof Date ? schedule.lastUpdated : new Date(schedule.lastUpdated);
+                                  }
+                                }
+                                
+                                // Fall back to createdAt if nothing else works
+                                if (!endTime || endTime.getTime() <= 0) {
+                                  if (schedule.createdAt) {
+                                    endTime = schedule.createdAt instanceof Date ? schedule.createdAt : new Date(schedule.createdAt);
+                                    // Add a small duration (30 seconds) as fallback
+                                    endTime = new Date(endTime.getTime() + 30000);
+                                  }
+                                }
+                                
+                                if (endTime && endTime.getTime() > 0) {
+                                  // Calculate start time (when broadcast was scheduled to run)
+                                  const [hours, minutes] = schedule.time.split(':').map(Number);
+                                  const scheduledDateTime = new Date(date);
+                                  scheduledDateTime.setHours(hours, minutes, 0);
+                                  
+                                  const durationMs = endTime.getTime() - scheduledDateTime.getTime();
+                                  
+                                  if (durationMs > 0) {
+                                    const totalSeconds = Math.floor(durationMs / 1000);
+                                    const hours = Math.floor(totalSeconds / 3600);
+                                    const minutes = Math.floor((totalSeconds % 3600) / 60);
+                                    const seconds = totalSeconds % 60;
+                                    
+                                    if (hours > 0) {
+                                      return `${hours}h ${minutes}m ${seconds}s`;
+                                    } else if (minutes > 0) {
+                                      return `${minutes}m ${seconds}s`;
+                                    } else {
+                                      return `${seconds}s`;
+                                    }
+                                  } else {
+                                    return '0s';
+                                  }
+                                } else {
+                                  return 'Completed (no timestamp)';
+                                }
+                              } else if (schedule.status === 'in-progress') {
+                                // Calculate elapsed time for in-progress broadcasts
+                                const [hours, minutes] = schedule.time.split(':').map(Number);
+                                const scheduledDateTime = new Date(date);
+                                scheduledDateTime.setHours(hours, minutes, 0);
+                                const now = new Date();
+                                
+                                const elapsedMs = now.getTime() - scheduledDateTime.getTime();
+                                
+                                if (elapsedMs > 0) {
+                                  const totalSeconds = Math.floor(elapsedMs / 1000);
+                                  const hours = Math.floor(totalSeconds / 3600);
+                                  const minutes = Math.floor((totalSeconds % 3600) / 60);
+                                  const seconds = totalSeconds % 60;
+                                  
+                                  if (hours > 0) {
+                                    return `${hours}h ${minutes}m ${seconds}s (running)`;
+                                  } else if (minutes > 0) {
+                                    return `${minutes}m ${seconds}s (running)`;
+                                  } else {
+                                    return `${seconds}s (running)`;
+                                  }
+                                }
+                              }
+                              
+                              return schedule.status === 'scheduled' ? 'Not started' : 'Unknown';
+                            })()}
                           </TableCell>
                           <TableCell className="text-right">
                             {schedule.status === "scheduled" && (
@@ -746,8 +888,9 @@ const ScheduleBroadcasts: React.FC = () => {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => handleCancelSchedule(schedule.id)}
+                                className="text-red-500 hover:text-red-700 hover:bg-red-50"
                               >
-                                <Trash2 className="w-4 h-4 text-red-500" />
+                                <Trash2 className="w-4 h-4" />
                               </Button>
                             )}
                           </TableCell>
@@ -756,7 +899,7 @@ const ScheduleBroadcasts: React.FC = () => {
                     })
                   ) : (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center text-gray-500 py-4">
+                      <TableCell colSpan={9} className="text-center text-gray-500 py-4">
                         No scheduled broadcasts
                       </TableCell>
                     </TableRow>
