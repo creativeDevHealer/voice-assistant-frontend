@@ -16,7 +16,7 @@ interface CallParams {
   campaign_id: string;
   ai_profile_name: string;
 }
-const serverUrl = 'https://inspired-touching-civet.ngrok-free.app';
+const serverUrl = 'http://35.88.71.8:5000';
 export const makeCall = async (params: CallParams) => {
   try {
     const response = await fetch(`${serverUrl}/api/make-call`, {

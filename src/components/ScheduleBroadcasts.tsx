@@ -97,7 +97,7 @@ const ScheduleBroadcasts: React.FC = () => {
   });
   const [currentTime, setCurrentTime] = useState(new Date());
   const { toast } = useToast();
-  const serverUrl = 'https://inspired-touching-civet.ngrok-free.app';
+  const serverUrl = 'http://35.88.71.8:5000';
 
   // Update current time every second
   useEffect(() => {
@@ -431,75 +431,6 @@ const ScheduleBroadcasts: React.FC = () => {
       });
     }
   };
-
-  // Add function to track call statuses
-//   const trackCallStatuses = async (broadcastId: string, callSids: string[]) => {
-//     try {
-//       const broadcastRef = doc(db, 'scheduledBroadcasts', broadcastId);
-//       let completedCount = 0;
-//       let failedCount = 0;
-
-//       for (const callSid of callSids) {
-//         try {
-//           const response = await fetch(`${serverUrl}/api/call-status/${callSid}`, {
-//             method: 'POST',
-//             headers: {
-//               'Accept': 'application/json'
-//             }
-//           });
-
-//           if (!response.ok) continue;
-
-//           const data = await response.json();
-//           const status = data.data.status;
-
-//           if (status === "completed" || status === "voicemail" || status === "in-progress" || status === "answered") {
-//             completedCount++;
-//           } else if (status === "failed" || status === "no-answer" || status === "busy" || status === "canceled") {
-//             failedCount++;
-//           }
-//         } catch (error) {
-//           console.error(`Error checking status for callSid ${callSid}:`, error);
-//         }
-//       }
-
-//       // Update broadcast status in Firestore
-//       await updateDoc(broadcastRef, {
-//         completedCalls: completedCount,
-//         failedCalls: failedCount,
-//         lastUpdated: Timestamp.now()
-//       });
-
-//       // Update local state
-//       setScheduledBroadcasts(prev =>
-//         prev.map(schedule =>
-//           schedule.id === broadcastId
-//             ? {
-//                 ...schedule,
-//                 completedCalls: completedCount,
-//                 failedCalls: failedCount,
-//                 lastUpdated: new Date()
-//               }
-//             : schedule
-//         )
-//       );
-//     } catch (error) {
-//       console.error('Error tracking call statuses:', error);
-//     }
-//   };
-
-  // Add effect to periodically check call statuses
-//   useEffect(() => {
-//     const interval = setInterval(() => {
-//       scheduledBroadcasts.forEach(broadcast => {
-//         if (broadcast.status === "in-progress" && broadcast.callSids) {
-//           trackCallStatuses(broadcast.id, broadcast.callSids);
-//         }
-//       });
-//     }, 30000); // Check every 30 seconds
-
-//     return () => clearInterval(interval);
-//   }, [scheduledBroadcasts]);
 
   const handleRemoveDataset = (datasetId: string) => {
     // Remove from state
