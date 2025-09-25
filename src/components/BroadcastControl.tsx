@@ -50,12 +50,13 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   const [failedCalls, setFailedCalls] = useState(0);
   
   // Calculate actual counts from callStatuses to prevent duplicate counting
+  // Keep categories consistent with resetCounters()
   const actualCompletedCalls = callStatuses.filter(call => 
-    ['completed', 'voicemail'].includes(call.status)
+    ['completed', 'voicemail', 'in-progress', 'answered', 'busy'].includes(call.status)
   ).length;
   
   const actualFailedCalls = callStatuses.filter(call => 
-    ['no-answer', 'busy', 'failed'].includes(call.status)
+    ['failed', 'no-answer', 'canceled'].includes(call.status)
   ).length;
   const [processedCallIds, setProcessedCallIds] = useState(new Set());
   const [processedCallSids, setProcessedCallSids] = useState(new Set());
@@ -85,6 +86,19 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   useEffect(() => {
     callSidsRef.current = callSids;
   }, [callSids]);
+
+  // Always clear persisted broadcast state on full page refresh
+  useEffect(() => {
+    console.log('clearing broadcastState');
+    localStorage.removeItem('broadcastState');
+  }, []);
+
+  // Consistent counter calculator used for initialization and resets
+  const calculateCountsFromStatuses = (statuses: CallStatus[]) => {
+    const completed = statuses.filter(s => ['completed', 'voicemail', 'in-progress', 'answered', 'busy'].includes(s.status)).length;
+    const failed = statuses.filter(s => ['failed', 'no-answer', 'canceled'].includes(s.status)).length;
+    return { completed, failed };
+  };
 
   // Function to check if response is an ngrok error page
 
@@ -287,11 +301,19 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   // Load broadcast state from localStorage on mount
   useEffect(() => {
     const savedState = localStorage.getItem('broadcastState');
+    console.log('savedState', savedState);
     if (savedState) {
       const state = JSON.parse(savedState);
       setIsBroadcasting(state.isBroadcasting);
-      setCompletedCalls(state.completedCalls);
-      setFailedCalls(state.failedCalls);
+      // Initialize counts from persisted callStatuses to avoid a 0 flash
+      if (Array.isArray(state.callStatuses)) {
+        const { completed, failed } = calculateCountsFromStatuses(state.callStatuses);
+        setCompletedCalls(completed);
+        setFailedCalls(failed);
+      } else {
+        setCompletedCalls(state.completedCalls || 0);
+        setFailedCalls(state.failedCalls || 0);
+      }
       setCallSids(state.callSids);
       setBroadcastId(state.broadcastId);
       setCallStatuses(state.callStatuses);
