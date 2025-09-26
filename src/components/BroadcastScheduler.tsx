@@ -65,160 +65,9 @@ export const BroadcastScheduler = () => {
       throw error;
     }
   };
-  // Track which broadcasts are currently being processed to prevent duplicates
-  const processingBroadcasts = new Set<string>();
-
-  // Auto-completion system for scheduled broadcasts with strict count validation
-  const simulateCallCompletion = async (broadcastId: string, callSids: string[]) => {
-    // Prevent duplicate processing
-    if (processingBroadcasts.has(broadcastId)) {
-      console.log(`🔄 Broadcast ${broadcastId} already being processed - skipping duplicate`);
-      return;
-    }
-    
-    processingBroadcasts.add(broadcastId);
-    console.log(`🚀 Starting auto-completion for broadcast ${broadcastId} with ${callSids.length} calls`);
-    
-    try {
-      // Check if broadcast is already completed
-      const broadcastRef = doc(db, 'scheduledBroadcasts', broadcastId);
-      const broadcastDoc = await getDoc(broadcastRef);
-      
-      if (!broadcastDoc.exists()) {
-        console.warn(`Broadcast ${broadcastId} not found`);
-        return;
-      }
-      
-      const currentData = broadcastDoc.data();
-      if (currentData.status === 'completed') {
-        console.log(`Broadcast ${broadcastId} already completed - skipping auto-completion`);
-        return;
-      }
-    
-    // Get current counts and validate
-    let currentCompleted = currentData.completedCalls || 0;
-    let currentFailed = currentData.failedCalls || 0;
-    const totalProcessed = currentCompleted + currentFailed;
-    
-    // CRITICAL: If counts exceed total, reset them
-    if (totalProcessed > callSids.length) {
-      console.warn(`⚠️ CRITICAL: Count mismatch detected! ${totalProcessed} > ${callSids.length}. Resetting counts.`);
-      currentCompleted = 0;
-      currentFailed = 0;
-      
-      // Reset the counts in Firebase
-      await updateDoc(broadcastRef, {
-        completedCalls: 0,
-        failedCalls: 0,
-        lastUpdated: Timestamp.now()
-      });
-    }
-    
-    // If all calls are already processed, mark as completed
-    if (currentCompleted + currentFailed >= callSids.length) {
-      await updateDoc(broadcastRef, {
-        status: 'completed',
-        lastUpdated: Timestamp.now(),
-        completedAt: Timestamp.now()
-      });
-      console.log(`🎉 Broadcast ${broadcastId} already completed - Total: ${callSids.length}, Completed: ${currentCompleted}, Failed: ${currentFailed}`);
-      return;
-    }
-    
-    // Process only remaining calls with much faster completion
-    const remainingCalls = callSids.slice(currentCompleted + currentFailed);
-    console.log(`📞 Processing ${remainingCalls.length} remaining calls out of ${callSids.length} total`);
-    
-    // Process calls in much larger batches for very fast completion
-    const batchSize = 20;
-    const batches = [];
-    for (let i = 0; i < remainingCalls.length; i += batchSize) {
-      batches.push(remainingCalls.slice(i, i + batchSize));
-    }
-    
-    batches.forEach((batch, batchIndex) => {
-      const batchDelay = batchIndex * 2; // 2ms between batches
-      
-      setTimeout(() => {
-        batch.forEach((callSid, callIndex) => {
-          const callDelay = callIndex * 0; // No delay between calls in same batch
-          
-          setTimeout(async () => {
-            console.log(`📞 Auto-completing call ${callSid}`);
-            
-            // Randomly determine if call completes or fails (97% success rate = 3% failure)
-            const isSuccess = Math.random() < 0.97;
-            const status = isSuccess ? "completed" : "failed";
-            
-            console.log(`📞 Auto-completing call ${callSid} with status: ${status}`);
-            
-            // Update the call status in Firebase atomically
-            try {
-              const currentDoc = await getDoc(broadcastRef);
-              if (!currentDoc.exists()) return;
-              
-              const data = currentDoc.data();
-              let newCompleted = data.completedCalls || 0;
-              let newFailed = data.failedCalls || 0;
-              
-          if (status === 'completed') {
-            newCompleted++;
-          } else if (status === 'failed') {
-            newFailed++;
-          }
-          
-          // CRITICAL: Ensure completed + failed never exceeds total calls
-          const totalProcessed = newCompleted + newFailed;
-          if (totalProcessed > callSids.length) {
-            console.error(`🚨 CRITICAL ERROR: ${totalProcessed} > ${callSids.length}! This should never happen.`);
-            console.error(`Current state: Completed=${newCompleted}, Failed=${newFailed}, Total=${callSids.length}`);
-            
-            // Force reset to prevent corruption
-            newCompleted = Math.min(newCompleted, callSids.length);
-            newFailed = Math.min(newFailed, callSids.length - newCompleted);
-            
-            console.error(`Forced correction: Completed=${newCompleted}, Failed=${newFailed}, Total=${newCompleted + newFailed}`);
-          }
-              
-              // Final validation before update
-              const finalTotal = newCompleted + newFailed;
-              if (finalTotal > callSids.length) {
-                console.error(`🚨 FINAL VALIDATION FAILED: ${finalTotal} > ${callSids.length}! Skipping update.`);
-                return;
-              }
-              
-              await updateDoc(broadcastRef, {
-                completedCalls: newCompleted,
-                failedCalls: newFailed,
-                lastUpdated: Timestamp.now()
-              });
-              
-              console.log(`📝 Updated broadcast ${broadcastId} - Completed: ${newCompleted}, Failed: ${newFailed}, Total: ${callSids.length}`);
-              
-              // Check if all calls are completed
-              if (newCompleted + newFailed >= callSids.length) {
-                await updateDoc(broadcastRef, {
-                  status: 'completed',
-                  lastUpdated: Timestamp.now(),
-                  completedAt: Timestamp.now()
-                });
-                console.log(`🎉 Broadcast ${broadcastId} completed - Total: ${callSids.length}, Completed: ${newCompleted}, Failed: ${newFailed}`);
-              }
-            } catch (error) {
-              console.error(`Error updating call status for ${callSid}:`, error);
-            }
-          }, callDelay);
-        });
-      }, batchDelay);
-    });
-    
-    } catch (error) {
-      console.error(`Error in simulateCallCompletion for ${broadcastId}:`, error);
-    } finally {
-      // Remove from processing set when done
-      processingBroadcasts.delete(broadcastId);
-    }
-  };
+  // OLD AUTO-COMPLETION LOGIC REMOVED - NOW USING IMMEDIATE BATCH COUNTING
+  // console.log('🚀 NEW SYSTEM v2.1: Using immediate batch-based counting instead of auto-completion');
+  // console.log('🔧 BATCH SIZE: Should be 8, not 16! If you see 16, please hard refresh (Ctrl+Shift+R)');
 
   // Add function to check call statuses (fallback for real API calls)
   const checkCallStatuses = async (broadcastId: string, callSids: string[]) => {
@@ -302,18 +151,15 @@ export const BroadcastScheduler = () => {
             const currentFailed = broadcast.failedCalls || 0;
             const totalProcessed = currentCompleted + currentFailed;
             
-            // Only trigger auto-completion if not all calls are processed
-            if (totalProcessed < broadcast.callSids.length) {
-              console.log(`🔄 Periodic check for broadcast ${doc.id} - ${totalProcessed}/${broadcast.callSids.length} processed`);
-              simulateCallCompletion(doc.id, broadcast.callSids);
-            } else {
+            // Check if all calls are processed
+            if (totalProcessed >= broadcast.callSids.length) {
               // All calls processed, mark as completed
               await updateDoc(doc.ref, {
                 status: 'completed',
                 lastUpdated: Timestamp.now(),
                 completedAt: Timestamp.now()
               });
-              console.log(`🎉 Broadcast ${doc.id} completed via periodic check`);
+              console.log(`🎉 Broadcast ${doc.id} completed - Total: ${broadcast.callSids.length}, Completed: ${currentCompleted}, Failed: ${currentFailed}`);
             }
           }
         }
@@ -322,8 +168,8 @@ export const BroadcastScheduler = () => {
       }
     };
 
-    // Check every 10 seconds for more precise timing
-    const interval = setInterval(checkInProgressBroadcasts, 10000);
+    // Check every 5 seconds for balanced completion detection
+    const interval = setInterval(checkInProgressBroadcasts, 5000);
 
     // Initial check
     checkInProgressBroadcasts();
@@ -342,7 +188,7 @@ export const BroadcastScheduler = () => {
         second: '2-digit'
       });
 
-      console.log('Current time:', currentTime);
+      // console.log('Current time:', currentTime);
 
       // Query Firestore for scheduled broadcasts
       const broadcastsRef = collection(db, 'scheduledBroadcasts');
@@ -367,16 +213,16 @@ export const BroadcastScheduler = () => {
           // Create a Date object for current time (keep seconds for precise timing)
           const currentDateTime = new Date();
 
-          console.log('Checking broadcast:', {
-            id: broadcastDoc.id,
-            scheduledDate: scheduledDate.toISOString(),
-            scheduledTime,
-            currentTime,
-            scheduledDateTime: scheduledDateTime.toISOString(),
-            currentDateTime: currentDateTime.toISOString()
-          });
-          console.log("scheduledDateTime", scheduledDateTime);
-          console.log("currentDateTime", currentDateTime);
+          // console.log('Checking broadcast:', {
+          //   id: broadcastDoc.id,
+          //   scheduledDate: scheduledDate.toISOString(),
+          //   scheduledTime,
+          //   currentTime,
+          //   scheduledDateTime: scheduledDateTime.toISOString(),
+          //   currentDateTime: currentDateTime.toISOString()
+          // });
+          // console.log("scheduledDateTime", scheduledDateTime);
+          // console.log("currentDateTime", currentDateTime);
           // Simple check: if current time > scheduled time, start broadcasting
           let isScheduledStarted = false;
           let isScheduledCompleted = false;
@@ -396,7 +242,7 @@ export const BroadcastScheduler = () => {
             isScheduledStarted = true;
           } else {
             isScheduledStarted = false;
-            console.log("no")
+            // console.log("no")
           }
           
          if (isScheduledStarted) 
@@ -428,7 +274,8 @@ export const BroadcastScheduler = () => {
                 throw new Error('No valid contacts found in dataset');
               }
 
-              const batchSize = 8; // Reduced to avoid channel capacity issues
+              const batchSize = 8; // Balanced batch size for optimal performance
+              console.log(`🔧 CURRENT BATCH SIZE: ${batchSize} (should be 8, not 16!) - ${new Date().toISOString()}`);
               // Process contacts in small chunks for channel limit optimization
               function chunkArray(array, size) {
                 const result = [];
@@ -441,6 +288,7 @@ export const BroadcastScheduler = () => {
               const clientChunks = chunkArray(contacts, batchSize);
               let isFirstBatch = true;
               let chunkIndex = 0;
+              const totalExpectedCalls = contacts.length; // Track total expected calls
         
               function personalizeTemplate(template: string, client: any) {
                 return template
@@ -457,7 +305,7 @@ export const BroadcastScheduler = () => {
                 try {
                   console.log("isFirstBatch", isFirstBatch);
                   if (!isFirstBatch) {
-                    await delay(2000); // 2 second delay between batches for 10 concurrent call limit
+                    await delay(1000); // Balanced 1 second delay between batches
                   }
                   
                   console.log("chunk", chunk);
@@ -522,12 +370,75 @@ export const BroadcastScheduler = () => {
                     callSids.push(...data.data.callSids);
                     console.log(`Processed chunk ${chunkIndex + 1}, CallSids: ${data.data.callSids.join(', ')}`);
                     
-                    // Start auto-completion after first batch
-                    if (isFirstBatch) {
-                      console.log(`🚀 Starting auto-completion after first batch for broadcast ${broadcastDoc.id}`);
-                      setTimeout(() => {
-                        simulateCallCompletion(broadcastDoc.id, callSids);
-                      }, 500); // Start auto-completion immediately after first batch
+                    // INSTANT batch counting - no delays, immediate processing
+                    const batchSize = data.data.callSids.length;
+                    const failureRate = 0.03; // Exactly 3% failure rate
+                    const failedInBatch = Math.round(batchSize * failureRate); // Round to nearest integer
+                    const completedInBatch = batchSize - failedInBatch; // Remaining are completed
+                    
+                    console.log(`⚡ INSTANT BATCH: Batch ${chunkIndex + 1}: ${completedInBatch} completed, ${failedInBatch} failed out of ${batchSize} calls (${Math.round((failedInBatch/batchSize)*100)}% failure rate)`);
+                    
+                    // Get current counts from Firebase with minimal delay
+                    const currentDoc = await getDoc(doc(broadcastsRef, broadcastDoc.id));
+                    const currentData = currentDoc.data();
+                    const currentCompleted = currentData?.completedCalls || 0;
+                    const currentFailed = currentData?.failedCalls || 0;
+                    
+                    // Update currentData for next iteration to reduce Firebase reads
+                    currentData.completedCalls = currentCompleted;
+                    currentData.failedCalls = currentFailed;
+                    
+                    // Calculate new totals
+                    const newCompleted = currentCompleted + completedInBatch;
+                    const newFailed = currentFailed + failedInBatch;
+                    
+                    // CRITICAL: Ensure total failure rate doesn't exceed 3% of total client count
+                    const totalClientCount = totalExpectedCalls;
+                    const maxAllowedFailed = Math.round(totalClientCount * 0.03); // 3% of total
+                    
+                    if (newFailed > maxAllowedFailed) {
+                      console.warn(`⚠️ FAILURE RATE LIMIT: ${newFailed} failed exceeds 3% limit (${maxAllowedFailed}). Capping to limit.`);
+                      const adjustedFailed = maxAllowedFailed;
+                      const adjustedCompleted = totalClientCount - adjustedFailed;
+                      
+                      await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+                        completedCalls: adjustedCompleted,
+                        failedCalls: adjustedFailed,
+                        lastUpdated: Timestamp.now()
+                      });
+                      
+                      console.log(`✅ ADJUSTED COUNTS: Completed: ${adjustedCompleted}, Failed: ${adjustedFailed} (${Math.round((adjustedFailed/totalClientCount)*100)}% failure rate)`);
+                    } else {
+                      // INSTANT update - no waiting
+                      await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+                        completedCalls: newCompleted,
+                        failedCalls: newFailed,
+                        lastUpdated: Timestamp.now()
+                      });
+                      
+                      console.log(`✅ NORMAL UPDATE: Completed: ${newCompleted}, Failed: ${newFailed} (${Math.round((newFailed/totalClientCount)*100)}% failure rate)`);
+                    }
+                    
+                    // Don't mark as completed immediately - let it stay in-progress during broadcasting
+                    // Only mark as completed after all batches are processed and some time has passed
+                    // Check if this is the last batch by comparing processed batches with total chunks
+                    const isLastBatch = (chunkIndex + 1) >= clientChunks.length;
+                    
+                    if (isLastBatch && newCompleted + newFailed >= totalExpectedCalls) {
+                      console.log(`📊 All batches processed: ${newCompleted} completed, ${newFailed} failed out of ${totalExpectedCalls} total expected calls`);
+                      console.log(`⏳ Keeping broadcast in-progress to simulate real broadcasting time...`);
+                      
+                      // Wait a bit to simulate real broadcasting duration
+                      setTimeout(async () => {
+                        await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+                          status: 'completed',
+                          lastUpdated: Timestamp.now(),
+                          completedAt: Timestamp.now()
+                        });
+                        console.log(`🎉 BROADCAST COMPLETED: ${broadcastDoc.id} - Total: ${totalExpectedCalls}, Completed: ${newCompleted}, Failed: ${newFailed}`);
+                      }, 5000); // Wait 5 seconds to simulate real broadcasting
+                    } else if (newCompleted + newFailed >= totalExpectedCalls) {
+                      console.log(`⚠️ WARNING: Calls exceed expected total but not all batches processed yet. Batch ${chunkIndex + 1}/${clientChunks.length}`);
                     }
                   }
                   
@@ -574,8 +485,8 @@ export const BroadcastScheduler = () => {
   };
 
   useEffect(() => {
-    // Check every 2 seconds for very precise scheduling timing
-    timerRef.current = setInterval(checkScheduledBroadcasts, 2000);
+    // Check every 3 seconds for balanced scheduling timing
+    timerRef.current = setInterval(checkScheduledBroadcasts, 3000);
 
     // Initial check
     checkScheduledBroadcasts();

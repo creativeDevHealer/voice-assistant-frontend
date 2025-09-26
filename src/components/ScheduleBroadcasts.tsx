@@ -736,7 +736,7 @@ const ScheduleBroadcasts: React.FC = () => {
                                   const [hours, minutes] = schedule.time.split(':').map(Number);
                                   const dateTime = new Date(date);
                                   dateTime.setHours(hours, minutes, 0);
-                                  const now = new Date();
+                                  const now = currentTime;
                                   const diff = dateTime.getTime() - now.getTime();
                                   if (diff > 0) {
                                     const hoursLeft = Math.floor(diff / (1000 * 60 * 60));
@@ -859,7 +859,7 @@ const ScheduleBroadcasts: React.FC = () => {
                                 const [hours, minutes] = schedule.time.split(':').map(Number);
                                 const scheduledDateTime = new Date(date);
                                 scheduledDateTime.setHours(hours, minutes, 0);
-                                const now = new Date();
+                                const now = currentTime;
                                 
                                 const elapsedMs = now.getTime() - scheduledDateTime.getTime();
                                 
