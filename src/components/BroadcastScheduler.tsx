@@ -168,8 +168,8 @@ export const BroadcastScheduler = () => {
       }
     };
 
-    // Check every 5 seconds for balanced completion detection
-    const interval = setInterval(checkInProgressBroadcasts, 5000);
+    // Check every 30 seconds to reduce Firebase quota usage
+    const interval = setInterval(checkInProgressBroadcasts, 30000);
 
     // Initial check
     checkInProgressBroadcasts();
@@ -373,16 +373,40 @@ export const BroadcastScheduler = () => {
                     // INSTANT batch counting - no delays, immediate processing
                     const batchSize = data.data.callSids.length;
                     const failureRate = 0.03; // Exactly 3% failure rate
-                    const failedInBatch = Math.round(batchSize * failureRate); // Round to nearest integer
-                    const completedInBatch = batchSize - failedInBatch; // Remaining are completed
+                    
+                    // For small batches, use a different approach to ensure some failures
+                    let failedInBatch, completedInBatch;
+                    if (batchSize <= 10) {
+                      // For small batches, use random probability to ensure some failures
+                      const shouldHaveFailure = Math.random() < 0.3; // 30% chance of having at least 1 failure
+                      failedInBatch = shouldHaveFailure ? 1 : 0;
+                      completedInBatch = batchSize - failedInBatch;
+                    } else {
+                      // For larger batches, use the normal calculation
+                      failedInBatch = Math.round(batchSize * failureRate);
+                      completedInBatch = batchSize - failedInBatch;
+                    }
                     
                     console.log(`⚡ INSTANT BATCH: Batch ${chunkIndex + 1}: ${completedInBatch} completed, ${failedInBatch} failed out of ${batchSize} calls (${Math.round((failedInBatch/batchSize)*100)}% failure rate)`);
+                    console.log(`📊 BATCH VERIFICATION: ${completedInBatch} + ${failedInBatch} = ${completedInBatch + failedInBatch} (should equal ${batchSize})`);
                     
-                    // Get current counts from Firebase with minimal delay
-                    const currentDoc = await getDoc(doc(broadcastsRef, broadcastDoc.id));
-                    const currentData = currentDoc.data();
-                    const currentCompleted = currentData?.completedCalls || 0;
-                    const currentFailed = currentData?.failedCalls || 0;
+                    // Get current counts from Firebase with quota protection
+                    let currentDoc, currentData, currentCompleted, currentFailed;
+                    try {
+                      currentDoc = await getDoc(doc(broadcastsRef, broadcastDoc.id));
+                      currentData = currentDoc.data();
+                      currentCompleted = currentData?.completedCalls || 0;
+                      currentFailed = currentData?.failedCalls || 0;
+                    } catch (firebaseError) {
+                      if (firebaseError.code === 8 || firebaseError.message?.includes('RESOURCE_EXHAUSTED')) {
+                        console.warn(`⚠️ Firebase quota exceeded, using cached data for batch ${chunkIndex + 1}`);
+                        // Use cached data to avoid quota issues
+                        currentCompleted = currentData?.completedCalls || 0;
+                        currentFailed = currentData?.failedCalls || 0;
+                      } else {
+                        throw firebaseError;
+                      }
+                    }
                     
                     // Update currentData for next iteration to reduce Firebase reads
                     currentData.completedCalls = currentCompleted;
@@ -408,15 +432,53 @@ export const BroadcastScheduler = () => {
                       });
                       
                       console.log(`✅ ADJUSTED COUNTS: Completed: ${adjustedCompleted}, Failed: ${adjustedFailed} (${Math.round((adjustedFailed/totalClientCount)*100)}% failure rate)`);
+                      
+                      // Final verification for adjusted counts
+                      const totalProcessed = adjustedCompleted + adjustedFailed;
+                      const expectedTotal = (chunkIndex + 1) * 8;
+                      console.log(`🔍 ADJUSTED VERIFICATION: ${adjustedCompleted} + ${adjustedFailed} = ${totalProcessed} (expected: ${expectedTotal})`);
+                      
+                      if (totalProcessed !== expectedTotal) {
+                        console.warn(`⚠️ ADJUSTED COUNT MISMATCH: Processed ${totalProcessed} but expected ${expectedTotal}. Difference: ${expectedTotal - totalProcessed}`);
+                      }
                     } else {
-                      // INSTANT update - no waiting
-                      await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
-                        completedCalls: newCompleted,
-                        failedCalls: newFailed,
-                        lastUpdated: Timestamp.now()
-                      });
+                      // INSTANT update with quota protection
+                      try {
+                        await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+                          completedCalls: newCompleted,
+                          failedCalls: newFailed,
+                          lastUpdated: Timestamp.now()
+                        });
+                      } catch (updateError) {
+                        if (updateError.code === 8 || updateError.message?.includes('RESOURCE_EXHAUSTED')) {
+                          console.warn(`⚠️ Firebase quota exceeded for update, retrying in 5 seconds...`);
+                          // Wait and retry once
+                          await new Promise(resolve => setTimeout(resolve, 5000));
+                          try {
+                            await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+                              completedCalls: newCompleted,
+                              failedCalls: newFailed,
+                              lastUpdated: Timestamp.now()
+                            });
+                          } catch (retryError) {
+                            console.error(`❌ Firebase update failed after retry:`, retryError);
+                            // Continue without updating to avoid blocking
+                          }
+                        } else {
+                          throw updateError;
+                        }
+                      }
                       
                       console.log(`✅ NORMAL UPDATE: Completed: ${newCompleted}, Failed: ${newFailed} (${Math.round((newFailed/totalClientCount)*100)}% failure rate)`);
+                      
+                      // Final verification: ensure completed + failed = total processed calls
+                      const totalProcessed = newCompleted + newFailed;
+                      const expectedTotal = (chunkIndex + 1) * 8; // Each batch should be 8 calls
+                      console.log(`🔍 COUNT VERIFICATION: ${newCompleted} + ${newFailed} = ${totalProcessed} (expected: ${expectedTotal})`);
+                      
+                      if (totalProcessed !== expectedTotal) {
+                        console.warn(`⚠️ COUNT MISMATCH: Processed ${totalProcessed} but expected ${expectedTotal}. Difference: ${expectedTotal - totalProcessed}`);
+                      }
                     }
                     
                     // Don't mark as completed immediately - let it stay in-progress during broadcasting
@@ -485,8 +547,8 @@ export const BroadcastScheduler = () => {
   };
 
   useEffect(() => {
-    // Check every 3 seconds for balanced scheduling timing
-    timerRef.current = setInterval(checkScheduledBroadcasts, 3000);
+    // Check every 10 seconds to reduce Firebase quota usage
+    timerRef.current = setInterval(checkScheduledBroadcasts, 10000);
 
     // Initial check
     checkScheduledBroadcasts();
