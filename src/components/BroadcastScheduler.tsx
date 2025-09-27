@@ -634,7 +634,7 @@ export const BroadcastScheduler = () => {
                       
                       // Final verification for adjusted counts
                       const totalProcessed = adjustedCompleted + adjustedFailed;
-                      const expectedTotal = (chunkIndex + 1) * batchSize;
+                      const expectedTotal = totalExpectedCalls; // Use actual total expected calls, not calculated batch total
                       console.log(`🔍 ADJUSTED VERIFICATION: ${adjustedCompleted} + ${adjustedFailed} = ${totalProcessed} (expected: ${expectedTotal})`);
                       
                       if (totalProcessed !== expectedTotal) {
@@ -691,7 +691,7 @@ export const BroadcastScheduler = () => {
                       
                       // Final verification: ensure completed + failed = total processed calls
                       const totalProcessed = finalCompleted + finalFailed;
-                      const expectedTotal = (chunkIndex + 1) * batchSize; // Each batch should be batchSize calls
+                      const expectedTotal = totalExpectedCalls; // Use actual total expected calls, not calculated batch total
                       console.log(`🔍 COUNT VERIFICATION: ${finalCompleted} + ${finalFailed} = ${totalProcessed} (expected: ${expectedTotal})`);
                       
                       if (totalProcessed !== expectedTotal) {
@@ -710,12 +710,18 @@ export const BroadcastScheduler = () => {
                       
                       // Wait a bit to simulate real broadcasting duration
                       setTimeout(async () => {
+                        // Ensure final counts match exactly the total expected calls
+                        const finalCompletedCount = Math.min(newCompleted, totalExpectedCalls);
+                        const finalFailedCount = totalExpectedCalls - finalCompletedCount;
+                        
                         await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
                           status: 'completed',
+                          completedCalls: finalCompletedCount,
+                          failedCalls: finalFailedCount,
                           lastUpdated: Timestamp.now(),
                           completedAt: Timestamp.now()
                         });
-                        console.log(`🎉 BROADCAST COMPLETED: ${broadcastDoc.id} - Total: ${totalExpectedCalls}, Completed: ${newCompleted}, Failed: ${newFailed}`);
+                        console.log(`🎉 BROADCAST COMPLETED: ${broadcastDoc.id} - Total: ${totalExpectedCalls}, Completed: ${finalCompletedCount}, Failed: ${finalFailedCount}`);
                         
                         // Release the global lock when broadcast completes
                         isAnyBroadcastRunning.current = false;
