@@ -341,6 +341,7 @@ const ScheduleBroadcasts: React.FC = () => {
           callSids: data.callSids,
           completedCalls: data.completedCalls,
           failedCalls: data.failedCalls,
+          startedAt: data.startedAt, // Include startedAt field
           lastUpdated: data.lastUpdated?.toDate(),
           createdAt: data.createdAt?.toDate() || new Date()
         });
@@ -834,7 +835,14 @@ const ScheduleBroadcasts: React.FC = () => {
                                   
                                   // Use startedAt if available (actual start time)
                                   if (schedule.startedAt) {
-                                    startTime = schedule.startedAt instanceof Date ? schedule.startedAt : new Date(schedule.startedAt);
+                                    // Handle Firebase Timestamp properly
+                                    if (schedule.startedAt && typeof schedule.startedAt.toDate === 'function') {
+                                      startTime = schedule.startedAt.toDate();
+                                    } else if (schedule.startedAt instanceof Date) {
+                                      startTime = schedule.startedAt;
+                                    } else {
+                                      startTime = new Date(schedule.startedAt);
+                                    }
                                   } else {
                                     // Fall back to scheduled time if startedAt is not available
                                     const [hours, minutes] = schedule.time.split(':').map(Number);
@@ -869,16 +877,29 @@ const ScheduleBroadcasts: React.FC = () => {
                                 
                                 // Use startedAt if available (actual start time)
                                 if (schedule.startedAt) {
-                                  startTime = schedule.startedAt instanceof Date ? schedule.startedAt : new Date(schedule.startedAt);
+                                  // Handle Firebase Timestamp properly
+                                  if (schedule.startedAt && typeof schedule.startedAt.toDate === 'function') {
+                                    startTime = schedule.startedAt.toDate();
+                                    console.log(`🔍 DEBUG: Using startedAt.toDate(): ${startTime.toISOString()}`);
+                                  } else if (schedule.startedAt instanceof Date) {
+                                    startTime = schedule.startedAt;
+                                    console.log(`🔍 DEBUG: Using startedAt as Date: ${startTime.toISOString()}`);
+                                  } else {
+                                    startTime = new Date(schedule.startedAt);
+                                    console.log(`🔍 DEBUG: Using new Date(startedAt): ${startTime.toISOString()}`);
+                                  }
                                 } else {
                                   // Fall back to scheduled time if startedAt is not available
                                   const [hours, minutes] = schedule.time.split(':').map(Number);
                                   startTime = new Date(date);
                                   startTime.setHours(hours, minutes, 0);
+                                  console.log(`🔍 DEBUG: Using scheduled time (no startedAt): ${startTime.toISOString()}`);
                                 }
                                 
                                 const now = currentTime;
                                 const elapsedMs = now.getTime() - startTime.getTime();
+                                
+                                console.log(`🔍 DEBUG: Current time: ${now.toISOString()}, Start time: ${startTime.toISOString()}, Elapsed: ${elapsedMs}ms`);
                                 
                                 if (elapsedMs > 0) {
                                   const totalSeconds = Math.floor(elapsedMs / 1000);

@@ -67,21 +67,46 @@ export const BroadcastScheduler = () => {
         console.log('🚫 Found in-progress broadcast in Firebase, skipping next broadcast start');
         return;
       }
+
+      // Set the global lock immediately after checking Firebase
+      isAnyBroadcastRunning.current = true;
+      console.log('🔒 GLOBAL LOCK SET: Preventing other broadcasts from starting');
       
       const q = query(
         broadcastsRef,
-        where('status', '==', 'scheduled'),
-        orderBy('date', 'asc'),
-        orderBy('time', 'asc')
+        where('status', '==', 'scheduled')
       );
 
       const querySnapshot = await getDocs(q);
       const now = new Date();
 
+      // Sort broadcasts by date and time in JavaScript to avoid Firebase index requirement
+      const sortedBroadcasts = querySnapshot.docs.sort((a, b) => {
+        const broadcastA = a.data() as ScheduledBroadcast;
+        const broadcastB = b.data() as ScheduledBroadcast;
+        
+        // Compare dates first
+        const dateA = broadcastA.date.toDate();
+        const dateB = broadcastB.date.toDate();
+        
+        if (dateA.getTime() !== dateB.getTime()) {
+          return dateA.getTime() - dateB.getTime();
+        }
+        
+        // If dates are equal, compare times
+        const [hoursA, minutesA] = broadcastA.time.split(':').map(Number);
+        const [hoursB, minutesB] = broadcastB.time.split(':').map(Number);
+        
+        const timeA = hoursA * 60 + minutesA;
+        const timeB = hoursB * 60 + minutesB;
+        
+        return timeA - timeB;
+      });
+
       // Group broadcasts by scheduled time to handle same-time schedules
       const broadcastsByTime = new Map<string, { doc: any, broadcast: ScheduledBroadcast }[]>();
       
-      for (const broadcastDoc of querySnapshot.docs) {
+      for (const broadcastDoc of sortedBroadcasts) {
         const broadcast = broadcastDoc.data() as ScheduledBroadcast;
         const scheduledDate = broadcast.date.toDate();
         const scheduledTime = broadcast.time;
@@ -116,15 +141,15 @@ export const BroadcastScheduler = () => {
         
         console.log(`🚀 Starting first broadcast at ${timeKey}: ${broadcastDoc.id}`);
         
-        // Set the global lock to prevent other broadcasts from starting
-        isAnyBroadcastRunning.current = true;
-        
         // Update broadcast status to in-progress and record actual start time
+        const actualStartTime = Timestamp.now();
+        console.log(`🔍 DEBUG: Setting startedAt to: ${actualStartTime.toDate().toISOString()}`);
         await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
           status: 'in-progress',
-          startedAt: Timestamp.now(),
+          startedAt: actualStartTime,
           lastUpdated: Timestamp.now()
         });
+        console.log(`🔍 DEBUG: Firebase update completed for broadcast ${broadcastDoc.id}`);
 
         // Get the dataset and start the broadcast
         const dataset = getDatasetFromLocalStorage(broadcast.dataSetId);
@@ -203,10 +228,14 @@ export const BroadcastScheduler = () => {
       }
       
       console.log('ℹ️ No more scheduled broadcasts ready to start');
+      // Release the lock when no broadcasts are found
+      isAnyBroadcastRunning.current = false;
+      console.log(`🔓 GLOBAL LOCK RELEASED: No scheduled broadcasts found`);
     } catch (error) {
       console.error('Error starting next scheduled broadcast:', error);
       // Release the lock on error
       isAnyBroadcastRunning.current = false;
+      console.log(`🔓 GLOBAL LOCK RELEASED: Error occurred`);
     }
   };
   const MAX_RETRIES = 3;
@@ -356,9 +385,9 @@ export const BroadcastScheduler = () => {
       }
 
       // First check if there are any in-progress broadcasts in Firebase
-      const broadcastsRef = collection(db, 'scheduledBroadcasts');
+      const inProgressBroadcastsRef = collection(db, 'scheduledBroadcasts');
       const inProgressQuery = query(
-        broadcastsRef,
+        inProgressBroadcastsRef,
         where('status', '==', 'in-progress')
       );
       
@@ -367,6 +396,10 @@ export const BroadcastScheduler = () => {
         console.log('🚫 Found in-progress broadcast in Firebase, skipping scheduled broadcast check');
         return;
       }
+
+      // Set the global lock immediately after checking Firebase
+      isAnyBroadcastRunning.current = true;
+      console.log('🔒 GLOBAL LOCK SET: Preventing other broadcasts from starting');
 
       // Get current time
       const now = new Date();
@@ -380,9 +413,9 @@ export const BroadcastScheduler = () => {
       // console.log('Current time:', currentTime);
 
       // Query Firestore for scheduled broadcasts
-      const broadcastsRef = collection(db, 'scheduledBroadcasts');
+      const scheduledBroadcastsRef = collection(db, 'scheduledBroadcasts');
       const q = query(
-        broadcastsRef,
+        scheduledBroadcastsRef,
         where('status', '==', 'scheduled')
       );
 
@@ -417,9 +450,6 @@ export const BroadcastScheduler = () => {
           let isScheduledCompleted = false;
           
           if (currentDateTime > scheduledDateTime) {
-            // Set the global lock to prevent other broadcasts from starting
-            isAnyBroadcastRunning.current = true;
-            
             console.log(`✅ Starting broadcast ${broadcastDoc.id} - current time is after scheduled time`)
             console.log(`🔒 GLOBAL LOCK: Preventing other scheduled broadcasts from starting`);
             console.log(`Executing scheduled broadcast: ${broadcastDoc.id}`);
@@ -447,11 +477,14 @@ export const BroadcastScheduler = () => {
             
             try {
               // Update broadcast status to in-progress and record actual start time
-              await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+              const actualStartTime = Timestamp.now();
+              console.log(`🔍 DEBUG: Setting startedAt to: ${actualStartTime.toDate().toISOString()}`);
+              await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
                 status: 'in-progress',
-                startedAt: Timestamp.now(), // Record actual start time
+                startedAt: actualStartTime, // Record actual start time
                 lastUpdated: Timestamp.now()
               });
+              console.log(`🔍 DEBUG: Firebase update completed for broadcast ${broadcastDoc.id}`);
 
               // Get the dataset from localStorage
               const dataset = getDatasetFromLocalStorage(broadcast.dataSetId);
@@ -598,7 +631,7 @@ export const BroadcastScheduler = () => {
                     // Get current counts from Firebase with quota protection
                     let currentDoc, currentData, currentCompleted, currentFailed;
                     try {
-                      currentDoc = await getDoc(doc(broadcastsRef, broadcastDoc.id));
+                      currentDoc = await getDoc(doc(inProgressBroadcastsRef, broadcastDoc.id));
                       currentData = currentDoc.data();
                       currentCompleted = currentData?.completedCalls || 0;
                       currentFailed = currentData?.failedCalls || 0;
@@ -655,7 +688,7 @@ export const BroadcastScheduler = () => {
                       const adjustedFailed = maxAllowedFailed;
                       const adjustedCompleted = finalCompleted; // Keep the current completed count, don't recalculate
                       
-                      await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+                      await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
                         completedCalls: adjustedCompleted,
                         failedCalls: adjustedFailed,
                         lastUpdated: Timestamp.now()
@@ -673,7 +706,7 @@ export const BroadcastScheduler = () => {
                       }
                       
                       // Mark as completed since we've reached the limit
-                      await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+                      await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
                         status: 'completed',
                         completedAt: Timestamp.now(),
                         lastUpdated: Timestamp.now()
@@ -693,7 +726,7 @@ export const BroadcastScheduler = () => {
                     } else {
                       // INSTANT update with quota protection
                       try {
-                        await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+                        await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
                           completedCalls: finalCompleted,
                           failedCalls: finalFailed,
                           lastUpdated: Timestamp.now()
@@ -704,7 +737,7 @@ export const BroadcastScheduler = () => {
                           // Wait and retry once
                           await new Promise(resolve => setTimeout(resolve, 5000));
                           try {
-                            await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+                            await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
                               completedCalls: finalCompleted,
                               failedCalls: finalFailed,
                               lastUpdated: Timestamp.now()
@@ -745,7 +778,7 @@ export const BroadcastScheduler = () => {
                         const finalCompletedCount = Math.min(newCompleted, totalExpectedCalls);
                         const finalFailedCount = totalExpectedCalls - finalCompletedCount;
                         
-                        await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+                        await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
                           status: 'completed',
                           completedCalls: finalCompletedCount,
                           failedCalls: finalFailedCount,
@@ -778,7 +811,7 @@ export const BroadcastScheduler = () => {
               }
 
               // Update broadcast with callSids
-              await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+              await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
                 callSids,
                 lastUpdated: Timestamp.now()
               });
@@ -791,7 +824,7 @@ export const BroadcastScheduler = () => {
             } catch (error) {
               console.error(`Error processing broadcast ${broadcastDoc.id}:`, error);
               // Update broadcast status to failed
-              await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+              await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
                 status: 'failed',
                 lastUpdated: Timestamp.now(),
                 error: error instanceof Error ? error.message : 'Unknown error occurred'
