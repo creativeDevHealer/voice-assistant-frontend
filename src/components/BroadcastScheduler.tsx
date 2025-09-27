@@ -47,9 +47,27 @@ export const BroadcastScheduler = () => {
   // Function to start the next scheduled broadcast
   const startNextScheduledBroadcast = async () => {
     try {
+      // Check if any broadcast is already running
+      if (isAnyBroadcastRunning.current) {
+        console.log('🚫 Another scheduled broadcast is already running, skipping next broadcast start');
+        return;
+      }
+
       console.log('🔍 Checking for next scheduled broadcast to start...');
       
+      // First check if there are any in-progress broadcasts in Firebase
       const broadcastsRef = collection(db, 'scheduledBroadcasts');
+      const inProgressQuery = query(
+        broadcastsRef,
+        where('status', '==', 'in-progress')
+      );
+      
+      const inProgressSnapshot = await getDocs(inProgressQuery);
+      if (!inProgressSnapshot.empty) {
+        console.log('🚫 Found in-progress broadcast in Firebase, skipping next broadcast start');
+        return;
+      }
+      
       const q = query(
         broadcastsRef,
         where('status', '==', 'scheduled'),
@@ -334,6 +352,19 @@ export const BroadcastScheduler = () => {
       // Check if any broadcast is already running
       if (isAnyBroadcastRunning.current) {
         console.log('🚫 Another scheduled broadcast is already running, skipping check');
+        return;
+      }
+
+      // First check if there are any in-progress broadcasts in Firebase
+      const broadcastsRef = collection(db, 'scheduledBroadcasts');
+      const inProgressQuery = query(
+        broadcastsRef,
+        where('status', '==', 'in-progress')
+      );
+      
+      const inProgressSnapshot = await getDocs(inProgressQuery);
+      if (!inProgressSnapshot.empty) {
+        console.log('🚫 Found in-progress broadcast in Firebase, skipping scheduled broadcast check');
         return;
       }
 
@@ -753,11 +784,7 @@ export const BroadcastScheduler = () => {
               });
 
               console.log(`Broadcast ${broadcastDoc.id} started with ${callSids.length} calls`);
-              await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
-                status: 'in-progress',
-                startedAt: Timestamp.now(), // Record actual start time
-                lastUpdated: Timestamp.now()
-              });
+              // Note: startedAt was already set when status was changed to in-progress
 
               // Auto-completion already started after first batch
               console.log(`✅ All batches processed for broadcast ${broadcastDoc.id}, auto-completion already running`);
