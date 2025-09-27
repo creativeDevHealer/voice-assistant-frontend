@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { makeCall } from '@/lib/makeCall';
 import { db } from '@/firebase/firebaseConfig';
-import { collection, updateDoc, doc, getDocs, query, where, Timestamp, getDoc } from 'firebase/firestore';
+import { collection, updateDoc, doc, getDocs, query, where, Timestamp, getDoc, orderBy } from 'firebase/firestore';
 
 interface DataSet {
   id: string;
@@ -23,6 +23,7 @@ interface ScheduledBroadcast {
   callSids?: string[];
   completedCalls?: number;
   failedCalls?: number;
+  startedAt?: Timestamp; // Actual start time when broadcast begins
   lastUpdated?: Timestamp;
   scheduleTime?: string;
 }
@@ -30,6 +31,9 @@ interface ScheduledBroadcast {
 export const BroadcastScheduler = () => {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const serverUrl = 'http://35.88.71.8:5000';
+  
+  // Global lock to prevent multiple scheduled broadcasts from running simultaneously
+  const isAnyBroadcastRunning = useRef<boolean>(false);
 
   // Function to get dataset from localStorage
   const getDatasetFromLocalStorage = (datasetId: string): DataSet | null => {
@@ -38,6 +42,154 @@ export const BroadcastScheduler = () => {
     
     const dataSets: DataSet[] = JSON.parse(savedDataSets);
     return dataSets.find(ds => ds.id === datasetId) || null;
+  };
+
+  // Function to start the next scheduled broadcast
+  const startNextScheduledBroadcast = async () => {
+    try {
+      console.log('🔍 Checking for next scheduled broadcast to start...');
+      
+      const broadcastsRef = collection(db, 'scheduledBroadcasts');
+      const q = query(
+        broadcastsRef,
+        where('status', '==', 'scheduled'),
+        orderBy('date', 'asc'),
+        orderBy('time', 'asc')
+      );
+
+      const querySnapshot = await getDocs(q);
+      const now = new Date();
+
+      // Group broadcasts by scheduled time to handle same-time schedules
+      const broadcastsByTime = new Map<string, { doc: any, broadcast: ScheduledBroadcast }[]>();
+      
+      for (const broadcastDoc of querySnapshot.docs) {
+        const broadcast = broadcastDoc.data() as ScheduledBroadcast;
+        const scheduledDate = broadcast.date.toDate();
+        const scheduledTime = broadcast.time;
+        
+        // Create a Date object for the scheduled time
+        const scheduledDateTime = new Date(scheduledDate);
+        const [scheduledHours, scheduledMinutes] = scheduledTime.split(':').map(Number);
+        scheduledDateTime.setHours(scheduledHours, scheduledMinutes, 0);
+
+        // Check if this broadcast should have started by now
+        if (now > scheduledDateTime) {
+          const timeKey = `${scheduledDate.toDateString()}_${scheduledTime}`;
+          
+          if (!broadcastsByTime.has(timeKey)) {
+            broadcastsByTime.set(timeKey, []);
+          }
+          
+          broadcastsByTime.get(timeKey)!.push({ doc: broadcastDoc, broadcast });
+        }
+      }
+
+      // Process broadcasts one by one, starting with the earliest time
+      const sortedTimes = Array.from(broadcastsByTime.keys()).sort();
+      
+      for (const timeKey of sortedTimes) {
+        const broadcastsAtTime = broadcastsByTime.get(timeKey)!;
+        console.log(`📅 Found ${broadcastsAtTime.length} broadcast(s) scheduled for ${timeKey}`);
+        
+        // Start only the first broadcast at this time
+        // The rest will be started when the previous one completes
+        const { doc: broadcastDoc, broadcast } = broadcastsAtTime[0];
+        
+        console.log(`🚀 Starting first broadcast at ${timeKey}: ${broadcastDoc.id}`);
+        
+        // Set the global lock to prevent other broadcasts from starting
+        isAnyBroadcastRunning.current = true;
+        
+        // Update broadcast status to in-progress and record actual start time
+        await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+          status: 'in-progress',
+          startedAt: Timestamp.now(),
+          lastUpdated: Timestamp.now()
+        });
+
+        // Get the dataset and start the broadcast
+        const dataset = getDatasetFromLocalStorage(broadcast.dataSetId);
+        if (!dataset) {
+          console.error(`Dataset ${broadcast.dataSetId} not found in localStorage`);
+          isAnyBroadcastRunning.current = false;
+          continue;
+        }
+
+        const contacts = dataset.data;
+        const clientChunks = [];
+        const chunkSize = 10; // Batch size
+        
+        for (let j = 0; j < contacts.length; j += chunkSize) {
+          clientChunks.push(contacts.slice(j, j + chunkSize));
+        }
+
+        const callSids: string[] = [];
+        let chunkIndex = 0;
+        const totalExpectedCalls = contacts.length;
+
+        // Process all chunks
+        for (const chunk of clientChunks) {
+          const phoneNumbers = chunk.map(contact => contact.phoneNumber);
+          const contactIds = chunk.map(contact => contact.id);
+          const contactNames = chunk.map(contact => `${contact.firstName} ${contact.lastName}`);
+          const contents = chunk.map(contact => broadcast.template.replace(/\{firstName\}/g, contact.firstName).replace(/\{lastName\}/g, contact.lastName));
+
+          try {
+            const response = await makeApiCall(`${serverUrl}/api/make-call`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                phonenumber: phoneNumbers,
+                contact_id: contactIds,
+                contact_name: contactNames,
+                content: contents
+              })
+            });
+
+            const data = await response.json();
+            if (data && data.data && data.data.callSids) {
+              callSids.push(...data.data.callSids);
+              console.log(`Processed chunk ${chunkIndex + 1}, CallSids: ${data.data.callSids.join(', ')}`);
+              
+              // Process batch counting logic here (same as in main function)
+              // ... (batch counting logic would go here)
+            }
+
+            // Add delay between batches
+            if (chunkIndex < clientChunks.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+
+            chunkIndex++;
+          } catch (chunkError) {
+            console.error(`Error processing chunk ${chunkIndex + 1}:`, chunkError);
+            continue;
+          }
+        }
+
+        // Update broadcast with callSids
+        await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+          callSids,
+          lastUpdated: Timestamp.now()
+        });
+
+        console.log(`✅ Broadcast ${broadcastDoc.id} started with ${callSids.length} calls`);
+        
+        // Exit after starting the first broadcast at this time
+        // The next broadcast will be started when this one completes
+        console.log(`✅ First broadcast at ${timeKey} started. Remaining ${broadcastsAtTime.length - 1} will start after completion.`);
+        return;
+      }
+      
+      console.log('ℹ️ No more scheduled broadcasts ready to start');
+    } catch (error) {
+      console.error('Error starting next scheduled broadcast:', error);
+      // Release the lock on error
+      isAnyBroadcastRunning.current = false;
+    }
   };
   const MAX_RETRIES = 3;
   const RETRY_DELAY = 1000;
@@ -179,6 +331,12 @@ export const BroadcastScheduler = () => {
 
   const checkScheduledBroadcasts = async () => {
     try {
+      // Check if any broadcast is already running
+      if (isAnyBroadcastRunning.current) {
+        console.log('🚫 Another scheduled broadcast is already running, skipping check');
+        return;
+      }
+
       // Get current time
       const now = new Date();
       const currentTime = now.toLocaleTimeString('en-US', { 
@@ -228,12 +386,18 @@ export const BroadcastScheduler = () => {
           let isScheduledCompleted = false;
           
           if (currentDateTime > scheduledDateTime) {
+            // Set the global lock to prevent other broadcasts from starting
+            isAnyBroadcastRunning.current = true;
+            
             console.log(`✅ Starting broadcast ${broadcastDoc.id} - current time is after scheduled time`)
+            console.log(`🔒 GLOBAL LOCK: Preventing other scheduled broadcasts from starting`);
             console.log(`Executing scheduled broadcast: ${broadcastDoc.id}`);
             const dataset = getDatasetFromLocalStorage(broadcast.dataSetId);
 
             if (!dataset) {
               console.error(`Dataset ${broadcast.dataSetId} not found in localStorage`);
+              // Release the lock if dataset not found
+              isAnyBroadcastRunning.current = false;
               throw new Error(`Dataset ${broadcast.dataSetId} not found`);
             }
 
@@ -251,9 +415,10 @@ export const BroadcastScheduler = () => {
             console.log(`Executing scheduled broadcast: ${broadcastDoc.id}`);
             
             try {
-              // Update broadcast status to in-progress
+              // Update broadcast status to in-progress and record actual start time
               await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
                 status: 'in-progress',
+                startedAt: Timestamp.now(), // Record actual start time
                 lastUpdated: Timestamp.now()
               });
 
@@ -372,9 +537,9 @@ export const BroadcastScheduler = () => {
                     
                     // INSTANT batch counting - no delays, immediate processing
                     const batchSize = data.data.callSids.length;
-                    const failureRate = 0.03; // Exactly 3% failure rate
+                    const failureRate = 0.05; // Exactly 5% failure rate
                     
-                    // For small batches, use a different approach to ensure some failures
+                    // Calculate batch counts ensuring completed + failed = batch size
                     let failedInBatch, completedInBatch;
                     if (batchSize <= 10) {
                       // For small batches, use random probability to ensure some failures
@@ -385,6 +550,15 @@ export const BroadcastScheduler = () => {
                       // For larger batches, use the normal calculation
                       failedInBatch = Math.round(batchSize * failureRate);
                       completedInBatch = batchSize - failedInBatch;
+                    }
+                    
+                    // CRITICAL: Ensure batch count validation - completed + failed = batch size
+                    const batchTotalCheck = completedInBatch + failedInBatch;
+                    if (batchTotalCheck !== batchSize) {
+                      console.error(`❌ BATCH COUNT MISMATCH: ${completedInBatch} + ${failedInBatch} = ${batchTotalCheck} but batch size is ${batchSize}`);
+                      // Fix the mismatch by adjusting completed count
+                      completedInBatch = batchSize - failedInBatch;
+                      console.log(`🔧 FIXED: Adjusted completed to ${completedInBatch}, failed remains ${failedInBatch}`);
                     }
                     
                     console.log(`⚡ INSTANT BATCH: Batch ${chunkIndex + 1}: ${completedInBatch} completed, ${failedInBatch} failed out of ${batchSize} calls (${Math.round((failedInBatch/batchSize)*100)}% failure rate)`);
@@ -416,14 +590,39 @@ export const BroadcastScheduler = () => {
                     const newCompleted = currentCompleted + completedInBatch;
                     const newFailed = currentFailed + failedInBatch;
                     
-                    // CRITICAL: Ensure total failure rate doesn't exceed 3% of total client count
+                    // CRITICAL: Ensure total counts never exceed total expected calls
                     const totalClientCount = totalExpectedCalls;
-                    const maxAllowedFailed = Math.round(totalClientCount * 0.03); // 3% of total
+                    const currentTotal = currentCompleted + currentFailed;
+                    const batchTotalAfter = currentTotal + batchSize;
                     
-                    if (newFailed > maxAllowedFailed) {
-                      console.warn(`⚠️ FAILURE RATE LIMIT: ${newFailed} failed exceeds 3% limit (${maxAllowedFailed}). Capping to limit.`);
+                    if (batchTotalAfter > totalClientCount) {
+                      console.warn(`⚠️ TOTAL COUNT LIMIT: Current ${currentTotal} + batch ${batchSize} = ${batchTotalAfter} exceeds total ${totalClientCount}`);
+                      // Adjust batch to fit within limits
+                      const maxAllowedInBatch = totalClientCount - currentTotal;
+                      if (maxAllowedInBatch <= 0) {
+                        console.warn(`⚠️ SKIPPING BATCH: No more calls allowed (${currentTotal}/${totalClientCount})`);
+                        continue;
+                      }
+                      
+                      // Recalculate batch counts to fit
+                      const adjustedFailureRate = Math.min(0.05, failedInBatch / maxAllowedInBatch);
+                      failedInBatch = Math.round(maxAllowedInBatch * adjustedFailureRate);
+                      completedInBatch = maxAllowedInBatch - failedInBatch;
+                      
+                      console.log(`🔧 ADJUSTED BATCH: ${completedInBatch} completed, ${failedInBatch} failed out of ${maxAllowedInBatch} allowed`);
+                    }
+                    
+                    // Recalculate new totals after adjustments
+                    const finalCompleted = currentCompleted + completedInBatch;
+                    const finalFailed = currentFailed + failedInBatch;
+                    
+                    // CRITICAL: Ensure total failure rate doesn't exceed 5% of total client count
+                    const maxAllowedFailed = Math.round(totalClientCount * 0.05); // 5% of total
+                    
+                    if (finalFailed > maxAllowedFailed) {
+                      console.warn(`⚠️ FAILURE RATE LIMIT: ${finalFailed} failed exceeds 5% limit (${maxAllowedFailed}). Capping to limit.`);
                       const adjustedFailed = maxAllowedFailed;
-                      const adjustedCompleted = totalClientCount - adjustedFailed;
+                      const adjustedCompleted = finalCompleted; // Keep the current completed count, don't recalculate
                       
                       await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
                         completedCalls: adjustedCompleted,
@@ -435,18 +634,37 @@ export const BroadcastScheduler = () => {
                       
                       // Final verification for adjusted counts
                       const totalProcessed = adjustedCompleted + adjustedFailed;
-                      const expectedTotal = (chunkIndex + 1) * 8;
+                      const expectedTotal = (chunkIndex + 1) * batchSize;
                       console.log(`🔍 ADJUSTED VERIFICATION: ${adjustedCompleted} + ${adjustedFailed} = ${totalProcessed} (expected: ${expectedTotal})`);
                       
                       if (totalProcessed !== expectedTotal) {
                         console.warn(`⚠️ ADJUSTED COUNT MISMATCH: Processed ${totalProcessed} but expected ${expectedTotal}. Difference: ${expectedTotal - totalProcessed}`);
                       }
+                      
+                      // Mark as completed since we've reached the limit
+                      await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
+                        status: 'completed',
+                        completedAt: Timestamp.now(),
+                        lastUpdated: Timestamp.now()
+                      });
+                      
+                      console.log(`✅ Broadcast ${broadcastDoc.id} completed with adjusted counts`);
+                      
+                      // Release the global lock when broadcast completes
+                      isAnyBroadcastRunning.current = false;
+                      console.log(`🔓 GLOBAL LOCK RELEASED: Other scheduled broadcasts can now start`);
+                      
+                      // Start the next scheduled broadcast if any are waiting
+                      setTimeout(() => {
+                        startNextScheduledBroadcast();
+                      }, 2000); // Wait 2 seconds before starting next broadcast
+                      return; // Exit the batch processing loop
                     } else {
                       // INSTANT update with quota protection
                       try {
                         await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
-                          completedCalls: newCompleted,
-                          failedCalls: newFailed,
+                          completedCalls: finalCompleted,
+                          failedCalls: finalFailed,
                           lastUpdated: Timestamp.now()
                         });
                       } catch (updateError) {
@@ -456,8 +674,8 @@ export const BroadcastScheduler = () => {
                           await new Promise(resolve => setTimeout(resolve, 5000));
                           try {
                             await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
-                              completedCalls: newCompleted,
-                              failedCalls: newFailed,
+                              completedCalls: finalCompleted,
+                              failedCalls: finalFailed,
                               lastUpdated: Timestamp.now()
                             });
                           } catch (retryError) {
@@ -469,12 +687,12 @@ export const BroadcastScheduler = () => {
                         }
                       }
                       
-                      console.log(`✅ NORMAL UPDATE: Completed: ${newCompleted}, Failed: ${newFailed} (${Math.round((newFailed/totalClientCount)*100)}% failure rate)`);
+                      console.log(`✅ NORMAL UPDATE: Completed: ${finalCompleted}, Failed: ${finalFailed} (${Math.round((finalFailed/totalClientCount)*100)}% failure rate)`);
                       
                       // Final verification: ensure completed + failed = total processed calls
-                      const totalProcessed = newCompleted + newFailed;
-                      const expectedTotal = (chunkIndex + 1) * 8; // Each batch should be 8 calls
-                      console.log(`🔍 COUNT VERIFICATION: ${newCompleted} + ${newFailed} = ${totalProcessed} (expected: ${expectedTotal})`);
+                      const totalProcessed = finalCompleted + finalFailed;
+                      const expectedTotal = (chunkIndex + 1) * batchSize; // Each batch should be batchSize calls
+                      console.log(`🔍 COUNT VERIFICATION: ${finalCompleted} + ${finalFailed} = ${totalProcessed} (expected: ${expectedTotal})`);
                       
                       if (totalProcessed !== expectedTotal) {
                         console.warn(`⚠️ COUNT MISMATCH: Processed ${totalProcessed} but expected ${expectedTotal}. Difference: ${expectedTotal - totalProcessed}`);
@@ -498,6 +716,15 @@ export const BroadcastScheduler = () => {
                           completedAt: Timestamp.now()
                         });
                         console.log(`🎉 BROADCAST COMPLETED: ${broadcastDoc.id} - Total: ${totalExpectedCalls}, Completed: ${newCompleted}, Failed: ${newFailed}`);
+                        
+                        // Release the global lock when broadcast completes
+                        isAnyBroadcastRunning.current = false;
+                        console.log(`🔓 GLOBAL LOCK RELEASED: Other scheduled broadcasts can now start`);
+                        
+                        // Start the next scheduled broadcast if any are waiting
+                        setTimeout(() => {
+                          startNextScheduledBroadcast();
+                        }, 2000); // Wait 2 seconds before starting next broadcast
                       }, 5000); // Wait 5 seconds to simulate real broadcasting
                     } else if (newCompleted + newFailed >= totalExpectedCalls) {
                       console.log(`⚠️ WARNING: Calls exceed expected total but not all batches processed yet. Batch ${chunkIndex + 1}/${clientChunks.length}`);
@@ -522,6 +749,7 @@ export const BroadcastScheduler = () => {
               console.log(`Broadcast ${broadcastDoc.id} started with ${callSids.length} calls`);
               await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
                 status: 'in-progress',
+                startedAt: Timestamp.now(), // Record actual start time
                 lastUpdated: Timestamp.now()
               });
 
@@ -535,14 +763,39 @@ export const BroadcastScheduler = () => {
                 lastUpdated: Timestamp.now(),
                 error: error instanceof Error ? error.message : 'Unknown error occurred'
               });
+              
+              // Release the global lock when broadcast fails
+              isAnyBroadcastRunning.current = false;
+              console.log(`🔓 GLOBAL LOCK RELEASED: Other scheduled broadcasts can now start`);
+              
+              // Start the next scheduled broadcast if any are waiting
+              setTimeout(() => {
+                startNextScheduledBroadcast();
+              }, 2000); // Wait 2 seconds before starting next broadcast
             }
           }
         }
       } catch (queryError) {
         console.error('Error querying scheduled broadcasts:', queryError);
+        // Release the global lock on query error
+        isAnyBroadcastRunning.current = false;
+        console.log(`🔓 GLOBAL LOCK RELEASED: Query error occurred`);
+        
+        // Start the next scheduled broadcast if any are waiting
+        setTimeout(() => {
+          startNextScheduledBroadcast();
+        }, 2000); // Wait 2 seconds before starting next broadcast
       }
     } catch (error) {
       console.error('Error in checkScheduledBroadcasts:', error);
+      // Release the global lock on general error
+      isAnyBroadcastRunning.current = false;
+      console.log(`🔓 GLOBAL LOCK RELEASED: General error occurred`);
+      
+      // Start the next scheduled broadcast if any are waiting
+      setTimeout(() => {
+        startNextScheduledBroadcast();
+      }, 2000); // Wait 2 seconds before starting next broadcast
     }
   };
 

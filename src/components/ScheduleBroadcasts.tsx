@@ -48,6 +48,7 @@ interface ScheduledBroadcast {
   failedCalls?: number;
   lastUpdated?: Date;
   completedAt?: Date;
+  startedAt?: Date; // Actual start time when broadcast begins
   createdAt: Date;
 }
 
@@ -828,12 +829,20 @@ const ScheduleBroadcasts: React.FC = () => {
                                 }
                                 
                                 if (endTime && endTime.getTime() > 0) {
-                                  // Calculate start time (when broadcast was scheduled to run)
-                                  const [hours, minutes] = schedule.time.split(':').map(Number);
-                                  const scheduledDateTime = new Date(date);
-                                  scheduledDateTime.setHours(hours, minutes, 0);
+                                  // Calculate start time (use actual start time if available, otherwise scheduled time)
+                                  let startTime = null;
                                   
-                                  const durationMs = endTime.getTime() - scheduledDateTime.getTime();
+                                  // Use startedAt if available (actual start time)
+                                  if (schedule.startedAt) {
+                                    startTime = schedule.startedAt instanceof Date ? schedule.startedAt : new Date(schedule.startedAt);
+                                  } else {
+                                    // Fall back to scheduled time if startedAt is not available
+                                    const [hours, minutes] = schedule.time.split(':').map(Number);
+                                    startTime = new Date(date);
+                                    startTime.setHours(hours, minutes, 0);
+                                  }
+                                  
+                                  const durationMs = endTime.getTime() - startTime.getTime();
                                   
                                   if (durationMs > 0) {
                                     const totalSeconds = Math.floor(durationMs / 1000);
@@ -855,13 +864,21 @@ const ScheduleBroadcasts: React.FC = () => {
                                   return 'Completed (no timestamp)';
                                 }
                               } else if (schedule.status === 'in-progress') {
-                                // Calculate elapsed time for in-progress broadcasts
-                                const [hours, minutes] = schedule.time.split(':').map(Number);
-                                const scheduledDateTime = new Date(date);
-                                scheduledDateTime.setHours(hours, minutes, 0);
-                                const now = currentTime;
+                                // Calculate elapsed time for in-progress broadcasts using actual start time
+                                let startTime = null;
                                 
-                                const elapsedMs = now.getTime() - scheduledDateTime.getTime();
+                                // Use startedAt if available (actual start time)
+                                if (schedule.startedAt) {
+                                  startTime = schedule.startedAt instanceof Date ? schedule.startedAt : new Date(schedule.startedAt);
+                                } else {
+                                  // Fall back to scheduled time if startedAt is not available
+                                  const [hours, minutes] = schedule.time.split(':').map(Number);
+                                  startTime = new Date(date);
+                                  startTime.setHours(hours, minutes, 0);
+                                }
+                                
+                                const now = currentTime;
+                                const elapsedMs = now.getTime() - startTime.getTime();
                                 
                                 if (elapsedMs > 0) {
                                   const totalSeconds = Math.floor(elapsedMs / 1000);
