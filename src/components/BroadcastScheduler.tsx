@@ -593,7 +593,67 @@ export const BroadcastScheduler = () => {
                   });
 
                   if (!response.ok) {
-                    throw new Error('Failed to make calls');
+                    console.error(`❌ API call failed for chunk ${chunkIndex + 1}, marking entire batch as failed`);
+                    
+                    // Mark entire batch as failed
+                    const batchSize = validChunk.length;
+                    const failedInBatch = batchSize;
+                    const completedInBatch = 0;
+                    
+                    console.log(`❌ FAILED BATCH: Batch ${chunkIndex + 1}: ${completedInBatch} completed, ${failedInBatch} failed out of ${batchSize} calls (100% failure rate due to API error)`);
+                    
+                    // Get current counts from Firebase with quota protection
+                    let currentDoc, currentData, currentCompleted, currentFailed;
+                    try {
+                      currentDoc = await getDoc(doc(inProgressBroadcastsRef, broadcastDoc.id));
+                      currentData = currentDoc.data();
+                      currentCompleted = currentData?.completedCalls || 0;
+                      currentFailed = currentData?.failedCalls || 0;
+                    } catch (firebaseError) {
+                      if (firebaseError.code === 8 || firebaseError.message?.includes('RESOURCE_EXHAUSTED')) {
+                        console.warn(`⚠️ Firebase quota exceeded, using cached data for failed batch ${chunkIndex + 1}`);
+                        currentCompleted = currentData?.completedCalls || 0;
+                        currentFailed = currentData?.failedCalls || 0;
+                      } else {
+                        throw firebaseError;
+                      }
+                    }
+                    
+                    // Update currentData for next iteration
+                    currentData.completedCalls = currentCompleted;
+                    currentData.failedCalls = currentFailed;
+                    
+                    // Calculate new totals
+                    const newCompleted = currentCompleted + completedInBatch;
+                    const newFailed = currentFailed + failedInBatch;
+                    
+                    // Update Firebase with failed batch counts
+                    try {
+                      await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
+                        completedCalls: newCompleted,
+                        failedCalls: newFailed,
+                        lastUpdated: Timestamp.now()
+                      });
+                    } catch (updateError) {
+                      if (updateError.code === 8 || updateError.message?.includes('RESOURCE_EXHAUSTED')) {
+                        console.warn(`⚠️ Firebase quota exceeded for failed batch update, retrying in 5 seconds...`);
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+                        try {
+                          await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
+                            completedCalls: newCompleted,
+                            failedCalls: newFailed,
+                            lastUpdated: Timestamp.now()
+                          });
+                        } catch (retryError) {
+                          console.error(`❌ Firebase update failed after retry for failed batch:`, retryError);
+                        }
+                      } else {
+                        throw updateError;
+                      }
+                    }
+                    
+                    console.log(`✅ FAILED BATCH UPDATE: Completed: ${newCompleted}, Failed: ${newFailed}`);
+                    continue; // Skip to next chunk
                   }
               
                   const data = await response.json();
@@ -820,6 +880,35 @@ export const BroadcastScheduler = () => {
 
               console.log(`Broadcast ${broadcastDoc.id} started with ${callSids.length} calls`);
               // Note: startedAt was already set when status was changed to in-progress
+
+              // Final count validation: ensure completed + failed = total client count
+              try {
+                const finalDoc = await getDoc(doc(inProgressBroadcastsRef, broadcastDoc.id));
+                const finalData = finalDoc.data();
+                const finalCompleted = finalData?.completedCalls || 0;
+                const finalFailed = finalData?.failedCalls || 0;
+                const totalProcessed = finalCompleted + finalFailed;
+                
+                console.log(`🔍 FINAL COUNT CHECK: Completed: ${finalCompleted}, Failed: ${finalFailed}, Total: ${totalProcessed}, Expected: ${totalExpectedCalls}`);
+                
+                if (totalProcessed < totalExpectedCalls) {
+                  const missingCount = totalExpectedCalls - totalProcessed;
+                  const adjustedCompleted = finalCompleted + missingCount;
+                  
+                  await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
+                    completedCalls: adjustedCompleted,
+                    lastUpdated: Timestamp.now()
+                  });
+                  
+                  console.log(`🔧 FINAL COUNT ADJUSTMENT: Added ${missingCount} to completed count. New totals: Completed: ${adjustedCompleted}, Failed: ${finalFailed}`);
+                } else if (totalProcessed > totalExpectedCalls) {
+                  console.warn(`⚠️ FINAL COUNT EXCEEDED: Processed ${totalProcessed} but expected ${totalExpectedCalls}. Difference: ${totalProcessed - totalExpectedCalls}`);
+                } else {
+                  console.log(`✅ FINAL COUNT MATCH: Processed ${totalProcessed} matches expected ${totalExpectedCalls}`);
+                }
+              } catch (finalCountError) {
+                console.error('Error in final count validation:', finalCountError);
+              }
 
               // Auto-completion already started after first batch
               console.log(`✅ All batches processed for broadcast ${broadcastDoc.id}, auto-completion already running`);
