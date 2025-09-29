@@ -836,18 +836,32 @@ const ScheduleBroadcasts: React.FC = () => {
                                   // Use startedAt if available (actual start time)
                                   if (schedule.startedAt) {
                                     // Handle Firebase Timestamp properly
-                                    if (schedule.startedAt && typeof schedule.startedAt.toDate === 'function') {
-                                      startTime = schedule.startedAt.toDate();
+                                    if (schedule.startedAt && typeof (schedule.startedAt as any).toDate === 'function') {
+                                      startTime = (schedule.startedAt as any).toDate();
                                     } else if (schedule.startedAt instanceof Date) {
                                       startTime = schedule.startedAt;
                                     } else {
                                       startTime = new Date(schedule.startedAt);
                                     }
-                                  } else {
-                                    // Fall back to scheduled time if startedAt is not available
+                                    
+                                    // Validate the date
+                                    if (isNaN(startTime.getTime())) {
+                                      console.warn(`⚠️ Invalid startedAt value: ${schedule.startedAt}, falling back to scheduled time`);
+                                      startTime = null;
+                                    }
+                                  }
+                                  
+                                  // Fall back to scheduled time if startedAt is not available or invalid
+                                  if (!startTime) {
                                     const [hours, minutes] = schedule.time.split(':').map(Number);
                                     startTime = new Date(date);
                                     startTime.setHours(hours, minutes, 0);
+                                    
+                                    // Validate the fallback date
+                                    if (isNaN(startTime.getTime())) {
+                                      console.warn(`⚠️ Invalid scheduled date/time: ${date} ${schedule.time}, using current time as fallback`);
+                                      startTime = new Date();
+                                    }
                                   }
                                   
                                   const durationMs = endTime.getTime() - startTime.getTime();
@@ -878,28 +892,47 @@ const ScheduleBroadcasts: React.FC = () => {
                                 // Use startedAt if available (actual start time)
                                 if (schedule.startedAt) {
                                   // Handle Firebase Timestamp properly
-                                  if (schedule.startedAt && typeof schedule.startedAt.toDate === 'function') {
-                                    startTime = schedule.startedAt.toDate();
-                                    console.log(`🔍 DEBUG: Using startedAt.toDate(): ${startTime.toISOString()}`);
+                                  if (schedule.startedAt && typeof (schedule.startedAt as any).toDate === 'function') {
+                                    startTime = (schedule.startedAt as any).toDate();
                                   } else if (schedule.startedAt instanceof Date) {
                                     startTime = schedule.startedAt;
-                                    console.log(`🔍 DEBUG: Using startedAt as Date: ${startTime.toISOString()}`);
                                   } else {
                                     startTime = new Date(schedule.startedAt);
-                                    console.log(`🔍 DEBUG: Using new Date(startedAt): ${startTime.toISOString()}`);
                                   }
-                                } else {
-                                  // Fall back to scheduled time if startedAt is not available
+                                  
+                                  // Validate the date before using it
+                                  if (isNaN(startTime.getTime())) {
+                                    console.warn(`⚠️ Invalid startedAt value: ${schedule.startedAt}, falling back to scheduled time`);
+                                    startTime = null;
+                                  } else {
+                                    console.log(`🔍 DEBUG: Using startedAt: ${startTime.toISOString()}`);
+                                  }
+                                }
+                                
+                                // Fall back to scheduled time if startedAt is not available or invalid
+                                if (!startTime) {
                                   const [hours, minutes] = schedule.time.split(':').map(Number);
                                   startTime = new Date(date);
                                   startTime.setHours(hours, minutes, 0);
+                                  
+                                  // Validate the fallback date
+                                  if (isNaN(startTime.getTime())) {
+                                    console.warn(`⚠️ Invalid scheduled date/time: ${date} ${schedule.time}, using current time as fallback`);
+                                    startTime = new Date();
+                                  }
+                                  
                                   console.log(`🔍 DEBUG: Using scheduled time (no startedAt): ${startTime.toISOString()}`);
                                 }
                                 
                                 const now = currentTime;
                                 const elapsedMs = now.getTime() - startTime.getTime();
                                 
-                                console.log(`🔍 DEBUG: Current time: ${now.toISOString()}, Start time: ${startTime.toISOString()}, Elapsed: ${elapsedMs}ms`);
+                                // Only log if startTime is valid
+                                if (!isNaN(startTime.getTime())) {
+                                  console.log(`🔍 DEBUG: Current time: ${now.toISOString()}, Start time: ${startTime.toISOString()}, Elapsed: ${elapsedMs}ms`);
+                                } else {
+                                  console.log(`🔍 DEBUG: Current time: ${now.toISOString()}, Start time: Invalid, Elapsed: ${elapsedMs}ms`);
+                                }
                                 
                                 if (elapsedMs > 0) {
                                   const totalSeconds = Math.floor(elapsedMs / 1000);
