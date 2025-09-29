@@ -421,6 +421,7 @@ export const BroadcastScheduler = () => {
 
       try {
         const querySnapshot = await getDocs(q);
+        let didStartAny = false; // Track if any broadcast actually started
 
         for (const broadcastDoc of querySnapshot.docs) {
           const broadcast = broadcastDoc.data() as ScheduledBroadcast;
@@ -465,6 +466,7 @@ export const BroadcastScheduler = () => {
             console.log('Dataset found:', dataset);
             const contacts = dataset.data;
             isScheduledStarted = true;
+            didStartAny = true;
           } else {
             isScheduledStarted = false;
             // console.log("no")
@@ -840,6 +842,12 @@ export const BroadcastScheduler = () => {
               }, 2000); // Wait 2 seconds before starting next broadcast
             }
           }
+        }
+
+        // If no broadcast qualified to start, release the global lock so future checks can run
+        if (!didStartAny) {
+          isAnyBroadcastRunning.current = false;
+          console.log('🔓 GLOBAL LOCK RELEASED: No eligible scheduled broadcasts to start at this time');
         }
       } catch (queryError) {
         console.error('Error querying scheduled broadcasts:', queryError);
