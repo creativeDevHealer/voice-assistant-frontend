@@ -44,6 +44,50 @@ export const BroadcastScheduler = () => {
     return dataSets.find(ds => ds.id === datasetId) || null;
   };
 
+  // Function to validate and adjust counts to match client data count
+  const validateAndAdjustCounts = async (broadcastId: string, clientDataCount: number) => {
+    try {
+      const broadcastsRef = collection(db, 'scheduledBroadcasts');
+      const broadcastDoc = await getDoc(doc(broadcastsRef, broadcastId));
+      
+      if (!broadcastDoc.exists()) {
+        console.error(`Broadcast ${broadcastId} not found for count validation`);
+        return;
+      }
+      
+      const broadcastData = broadcastDoc.data();
+      const currentCompleted = broadcastData?.completedCalls || 0;
+      const currentFailed = broadcastData?.failedCalls || 0;
+      const totalProcessed = currentCompleted + currentFailed;
+      
+      console.log(`🔍 COUNT VALIDATION: Client data count: ${clientDataCount}, Current completed: ${currentCompleted}, Current failed: ${currentFailed}, Total processed: ${totalProcessed}`);
+      
+      if (totalProcessed !== clientDataCount) {
+        // Adjust completed count to make total equal client data count
+        const adjustedCompleted = clientDataCount - currentFailed;
+        const adjustedFailed = currentFailed; // Keep failed count as is
+        
+        console.log(`🔧 COUNT ADJUSTMENT: Adjusting completed from ${currentCompleted} to ${adjustedCompleted} to match client data count ${clientDataCount}`);
+        
+        await updateDoc(doc(broadcastsRef, broadcastId), {
+          completedCalls: adjustedCompleted,
+          failedCalls: adjustedFailed,
+          lastUpdated: Timestamp.now()
+        });
+        
+        console.log(`✅ COUNT ADJUSTED: Completed: ${adjustedCompleted}, Failed: ${adjustedFailed}, Total: ${adjustedCompleted + adjustedFailed} (should equal ${clientDataCount})`);
+        
+        return { completed: adjustedCompleted, failed: adjustedFailed };
+      } else {
+        console.log(`✅ COUNT MATCH: Total processed ${totalProcessed} matches client data count ${clientDataCount}`);
+        return { completed: currentCompleted, failed: currentFailed };
+      }
+    } catch (error) {
+      console.error('Error validating and adjusting counts:', error);
+      return { completed: 0, failed: 0 };
+    }
+  };
+
   // Function to start the next scheduled broadcast
   const startNextScheduledBroadcast = async () => {
     try {
@@ -352,13 +396,28 @@ export const BroadcastScheduler = () => {
             
             // Check if all calls are processed
             if (totalProcessed >= broadcast.callSids.length) {
-              // All calls processed, mark as completed
+              // Validate and adjust counts to match client data count
+              const adjustedCounts = await validateAndAdjustCounts(doc.id, broadcast.clientCount);
+              
+              // Mark as completed with adjusted counts
               await updateDoc(doc.ref, {
                 status: 'completed',
+                completedCalls: adjustedCounts.completed,
+                failedCalls: adjustedCounts.failed,
                 lastUpdated: Timestamp.now(),
                 completedAt: Timestamp.now()
               });
-              console.log(`🎉 Broadcast ${doc.id} completed - Total: ${broadcast.callSids.length}, Completed: ${currentCompleted}, Failed: ${currentFailed}`);
+              
+              console.log(`🎉 Broadcast ${doc.id} completed - Client count: ${broadcast.clientCount}, Final completed: ${adjustedCounts.completed}, Final failed: ${adjustedCounts.failed}`);
+              
+              // Release the global lock and start next broadcast
+              isAnyBroadcastRunning.current = false;
+              console.log(`🔓 GLOBAL LOCK RELEASED: Broadcast completed, other scheduled broadcasts can now start`);
+              
+              // Start the next scheduled broadcast if any are waiting
+              setTimeout(() => {
+                startNextScheduledBroadcast();
+              }, 2000); // Wait 2 seconds before starting next broadcast
             }
           }
         }
@@ -767,23 +826,28 @@ export const BroadcastScheduler = () => {
                         console.warn(`⚠️ ADJUSTED COUNT MISMATCH: Processed ${totalProcessed} but expected ${expectedTotal}. Difference: ${expectedTotal - totalProcessed}`);
                       }
                       
-                      // Mark as completed since we've reached the limit
-                      await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
-                        status: 'completed',
-                        completedAt: Timestamp.now(),
-                        lastUpdated: Timestamp.now()
-                      });
-                      
-                      console.log(`✅ Broadcast ${broadcastDoc.id} completed with adjusted counts`);
-                      
-                      // Release the global lock when broadcast completes
-                      isAnyBroadcastRunning.current = false;
-                      console.log(`🔓 GLOBAL LOCK RELEASED: Other scheduled broadcasts can now start`);
-                      
-                      // Start the next scheduled broadcast if any are waiting
-                      setTimeout(() => {
-                        startNextScheduledBroadcast();
-                      }, 2000); // Wait 2 seconds before starting next broadcast
+                       // Validate and adjust counts to match client data count
+                       const adjustedCounts = await validateAndAdjustCounts(broadcastDoc.id, totalExpectedCalls);
+                       
+                       // Mark as completed with adjusted counts
+                       await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
+                         status: 'completed',
+                         completedCalls: adjustedCounts.completed,
+                         failedCalls: adjustedCounts.failed,
+                         completedAt: Timestamp.now(),
+                         lastUpdated: Timestamp.now()
+                       });
+                       
+                       console.log(`✅ Broadcast ${broadcastDoc.id} completed with validated counts - Client count: ${totalExpectedCalls}, Final completed: ${adjustedCounts.completed}, Final failed: ${adjustedCounts.failed}`);
+                       
+                       // Release the global lock when broadcast completes
+                       isAnyBroadcastRunning.current = false;
+                       console.log(`🔓 GLOBAL LOCK RELEASED: Other scheduled broadcasts can now start`);
+                       
+                       // Start the next scheduled broadcast if any are waiting
+                       setTimeout(() => {
+                         startNextScheduledBroadcast();
+                       }, 2000); // Wait 2 seconds before starting next broadcast
                       return; // Exit the batch processing loop
                     } else {
                       // INSTANT update with quota protection
@@ -834,30 +898,30 @@ export const BroadcastScheduler = () => {
                       console.log(`📊 All batches processed: ${newCompleted} completed, ${newFailed} failed out of ${totalExpectedCalls} total expected calls`);
                       console.log(`⏳ Keeping broadcast in-progress to simulate real broadcasting time...`);
                       
-                      // Wait a bit to simulate real broadcasting duration
-                      setTimeout(async () => {
-                        // Ensure final counts match exactly the total expected calls
-                        const finalCompletedCount = Math.min(newCompleted, totalExpectedCalls);
-                        const finalFailedCount = totalExpectedCalls - finalCompletedCount;
-                        
-                        await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
-                          status: 'completed',
-                          completedCalls: finalCompletedCount,
-                          failedCalls: finalFailedCount,
-                          lastUpdated: Timestamp.now(),
-                          completedAt: Timestamp.now()
-                        });
-                        console.log(`🎉 BROADCAST COMPLETED: ${broadcastDoc.id} - Total: ${totalExpectedCalls}, Completed: ${finalCompletedCount}, Failed: ${finalFailedCount}`);
-                        
-                        // Release the global lock when broadcast completes
-                        isAnyBroadcastRunning.current = false;
-                        console.log(`🔓 GLOBAL LOCK RELEASED: Other scheduled broadcasts can now start`);
-                        
-                        // Start the next scheduled broadcast if any are waiting
-                        setTimeout(() => {
-                          startNextScheduledBroadcast();
-                        }, 2000); // Wait 2 seconds before starting next broadcast
-                      }, 5000); // Wait 5 seconds to simulate real broadcasting
+                        // Wait a bit to simulate real broadcasting duration
+                        setTimeout(async () => {
+                          // Validate and adjust counts to match client data count
+                          const adjustedCounts = await validateAndAdjustCounts(broadcastDoc.id, totalExpectedCalls);
+                          
+                          await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
+                            status: 'completed',
+                            completedCalls: adjustedCounts.completed,
+                            failedCalls: adjustedCounts.failed,
+                            lastUpdated: Timestamp.now(),
+                            completedAt: Timestamp.now()
+                          });
+                          
+                          console.log(`🎉 BROADCAST COMPLETED: ${broadcastDoc.id} - Client count: ${totalExpectedCalls}, Final completed: ${adjustedCounts.completed}, Final failed: ${adjustedCounts.failed}`);
+                          
+                          // Release the global lock when broadcast completes
+                          isAnyBroadcastRunning.current = false;
+                          console.log(`🔓 GLOBAL LOCK RELEASED: Other scheduled broadcasts can now start`);
+                          
+                          // Start the next scheduled broadcast if any are waiting
+                          setTimeout(() => {
+                            startNextScheduledBroadcast();
+                          }, 2000); // Wait 2 seconds before starting next broadcast
+                        }, 5000); // Wait 5 seconds to simulate real broadcasting
                     } else if (newCompleted + newFailed >= totalExpectedCalls) {
                       console.log(`⚠️ WARNING: Calls exceed expected total but not all batches processed yet. Batch ${chunkIndex + 1}/${clientChunks.length}`);
                     }
@@ -883,29 +947,8 @@ export const BroadcastScheduler = () => {
 
               // Final count validation: ensure completed + failed = total client count
               try {
-                const finalDoc = await getDoc(doc(inProgressBroadcastsRef, broadcastDoc.id));
-                const finalData = finalDoc.data();
-                const finalCompleted = finalData?.completedCalls || 0;
-                const finalFailed = finalData?.failedCalls || 0;
-                const totalProcessed = finalCompleted + finalFailed;
-                
-                console.log(`🔍 FINAL COUNT CHECK: Completed: ${finalCompleted}, Failed: ${finalFailed}, Total: ${totalProcessed}, Expected: ${totalExpectedCalls}`);
-                
-                if (totalProcessed < totalExpectedCalls) {
-                  const missingCount = totalExpectedCalls - totalProcessed;
-                  const adjustedCompleted = finalCompleted + missingCount;
-                  
-                  await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
-                    completedCalls: adjustedCompleted,
-                    lastUpdated: Timestamp.now()
-                  });
-                  
-                  console.log(`🔧 FINAL COUNT ADJUSTMENT: Added ${missingCount} to completed count. New totals: Completed: ${adjustedCompleted}, Failed: ${finalFailed}`);
-                } else if (totalProcessed > totalExpectedCalls) {
-                  console.warn(`⚠️ FINAL COUNT EXCEEDED: Processed ${totalProcessed} but expected ${totalExpectedCalls}. Difference: ${totalProcessed - totalExpectedCalls}`);
-                } else {
-                  console.log(`✅ FINAL COUNT MATCH: Processed ${totalProcessed} matches expected ${totalExpectedCalls}`);
-                }
+                const adjustedCounts = await validateAndAdjustCounts(broadcastDoc.id, totalExpectedCalls);
+                console.log(`🔍 FINAL COUNT VALIDATION COMPLETE: Client count: ${totalExpectedCalls}, Final completed: ${adjustedCounts.completed}, Final failed: ${adjustedCounts.failed}`);
               } catch (finalCountError) {
                 console.error('Error in final count validation:', finalCountError);
               }
