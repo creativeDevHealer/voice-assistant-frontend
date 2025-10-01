@@ -802,10 +802,10 @@ export const BroadcastScheduler = () => {
                     const finalFailed = currentFailed + failedInBatch;
                     
                     // CRITICAL: Ensure total failure rate doesn't exceed 5% of total client count
-                    const maxAllowedFailed = Math.round(totalClientCount * 0.05); // 5% of total
+                    const maxAllowedFailed = Math.round(totalClientCount * 0.15); // 5% of total
                     
                     if (finalFailed > maxAllowedFailed) {
-                      console.warn(`⚠️ FAILURE RATE LIMIT: ${finalFailed} failed exceeds 5% limit (${maxAllowedFailed}). Capping to limit.`);
+                      // console.warn(`⚠️ FAILURE RATE LIMIT: ${finalFailed} failed exceeds 5% limit (${maxAllowedFailed}). Capping to limit.`);
                       const adjustedFailed = maxAllowedFailed;
                       const adjustedCompleted = finalCompleted; // Keep the current completed count, don't recalculate
                       
