@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, DollarSign, AlertCircle, Settings } from 'lucide-react';
+import { DollarSign, AlertCircle, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { balanceService, BalanceData } from '@/services/balanceService';
 import ApiKeySettings from './ApiKeySettings';
@@ -16,6 +16,7 @@ const BalanceDisplay: React.FC<BalanceDisplayProps> = ({ collapsed = false }) =>
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchBalance = async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -40,7 +41,21 @@ const BalanceDisplay: React.FC<BalanceDisplayProps> = ({ collapsed = false }) =>
   };
 
   useEffect(() => {
+    // Initial fetch
     fetchBalance();
+    
+    // Set up automatic refresh every 10 minutes (600,000 ms)
+    intervalRef.current = setInterval(() => {
+      console.log('🔄 Auto-refreshing balance (10 minutes interval)');
+      fetchBalance(false); // Don't show loading spinner for auto-refresh
+    }, 10 * 60 * 1000);
+    
+    // Cleanup interval on unmount
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
   }, []);
 
   const formatBalance = (amount: number) => {
@@ -63,8 +78,11 @@ const BalanceDisplay: React.FC<BalanceDisplayProps> = ({ collapsed = false }) =>
         <div className="flex items-center justify-center w-8 h-8 rounded-full bg-sidebar-accent">
           <DollarSign className="h-4 w-4 text-sidebar-foreground" />
         </div>
-        {loading && (
+        {loading && !balance && (
           <div className="w-6 h-6 border-2 border-sidebar-foreground/30 border-t-sidebar-foreground rounded-full animate-spin" />
+        )}
+        {error && (
+          <div className="w-2 h-2 rounded-full bg-yellow-400" title="API key not configured" />
         )}
       </div>
     );
@@ -76,29 +94,18 @@ const BalanceDisplay: React.FC<BalanceDisplayProps> = ({ collapsed = false }) =>
     <div className="p-4 border-t border-sidebar-border">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-medium text-sidebar-foreground">Account Balance</h3>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => fetchBalance()}
-            disabled={loading}
-            className="h-6 w-6 p-0 hover:bg-sidebar-accent/50"
-          >
-            <RefreshCw className={cn("h-3 w-3 text-sidebar-foreground/60", loading && "animate-spin")} />
-          </Button>
-          {error && (
-            <ApiKeySettings>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 p-0 hover:bg-sidebar-accent/50"
-                title="Configure API Key"
-              >
-                <Settings className="h-3 w-3 text-yellow-400" />
-              </Button>
-            </ApiKeySettings>
-          )}
-        </div>
+        {error && (
+          <ApiKeySettings>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 w-6 p-0 hover:bg-sidebar-accent/50"
+              title="Configure API Key"
+            >
+              <Settings className="h-3 w-3 text-yellow-400" />
+            </Button>
+          </ApiKeySettings>
+        )}
       </div>
 
       {loading && !balance ? (
@@ -123,7 +130,7 @@ const BalanceDisplay: React.FC<BalanceDisplayProps> = ({ collapsed = false }) =>
           
           {lastRefresh && (
             <p className="text-xs text-sidebar-foreground/60">
-              Updated {lastRefresh.toLocaleTimeString()}
+              Updated {lastRefresh.toLocaleTimeString()} • Auto-refresh every 10 min
             </p>
           )}
           
