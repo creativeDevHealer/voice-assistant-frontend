@@ -48,7 +48,7 @@ const BalanceDisplay: React.FC<BalanceDisplayProps> = ({ collapsed = false }) =>
     intervalRef.current = setInterval(() => {
       console.log('🔄 Auto-refreshing balance (10 minutes interval)');
       fetchBalance(false); // Don't show loading spinner for auto-refresh
-    }, 10 * 60 * 1000);
+    }, 30 * 60 * 1000);
     
     // Cleanup interval on unmount
     return () => {
@@ -130,7 +130,7 @@ const BalanceDisplay: React.FC<BalanceDisplayProps> = ({ collapsed = false }) =>
           
           {lastRefresh && (
             <p className="text-xs text-sidebar-foreground/60">
-              Updated {lastRefresh.toLocaleTimeString()} • Auto-refresh every 10 min
+              Updated {lastRefresh.toLocaleTimeString()} • Auto-refresh every 30 min
             </p>
           )}
           
