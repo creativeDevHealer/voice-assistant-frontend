@@ -11,6 +11,7 @@ import {
   Calendar,
   Send
 } from "lucide-react";
+import BalanceDisplay from "./BalanceDisplay";
 
 interface SidebarItemProps {
   icon: React.ElementType;
@@ -95,6 +96,10 @@ const Sidebar = ({ activeTab, onTabChange }: SidebarProps) => {
           />
         ))}
       </div>
+      
+      {/* Balance Display */}
+      <BalanceDisplay collapsed={collapsed} />
+      
       <div className="p-4 border-t border-sidebar-border">
         <div className="flex items-center gap-3">
           <div className="h-9 w-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sidebar-foreground">
