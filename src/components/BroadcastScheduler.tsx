@@ -21,8 +21,11 @@ interface ScheduledBroadcast {
   dataSetId: string;
   data?: any[];
   callSids?: string[];
+  failedCallSids?: string[]; // Array of failed call SIDs from batch processing
+  failedCallsCount?: number; // Count of failed calls from batch processing
+  expectedBatchCount?: number; // Expected number of batches to process (for reference only)
   completedCalls?: number;
-  failedCalls?: number;
+  failedCalls?: number; // Total failed calls count (includes both batch failures and individual call failures)
   startedAt?: Timestamp; // Actual start time when broadcast begins
   lastUpdated?: Timestamp;
   scheduleTime?: string;
@@ -60,26 +63,58 @@ export const BroadcastScheduler = () => {
       const currentFailed = broadcastData?.failedCalls || 0;
       const totalProcessed = currentCompleted + currentFailed;
       
-      console.log(`🔍 COUNT VALIDATION: Client data count: ${clientDataCount}, Current completed: ${currentCompleted}, Current failed: ${currentFailed}, Total processed: ${totalProcessed}`);
+      // Calculate expected counts from batch processing
+      const successfulCalls = broadcastData?.callSids?.length || 0;
+      const batchFailedCalls = broadcastData?.failedCallsCount || 0;
+      const totalExpectedFromBatches = successfulCalls + batchFailedCalls;
       
-      if (totalProcessed !== clientDataCount) {
-        // Adjust completed count to make total equal client data count
-        const adjustedCompleted = clientDataCount - currentFailed;
-        const adjustedFailed = currentFailed; // Keep failed count as is
+      // Calculate batch processing validation
+      const batchSize = 10; // Same as chunkSize in startNextScheduledBroadcast
+      const storedExpectedBatches = broadcastData?.expectedBatchCount || Math.ceil(clientDataCount / batchSize);
+      
+      // NOTE: expectedFromBatchProcessing is NOT batchCount * batchSize
+      // It should equal clientDataCount, not batchCount * batchSize
+      // The last batch might have fewer contacts than batchSize
+      
+      console.log(`🔍 COUNT VALIDATION:`);
+      console.log(`  - Client count: ${clientDataCount}`);
+      console.log(`  - Total processed: ${totalProcessed}`);
+      console.log(`  - Expected from batches: ${totalExpectedFromBatches}`);
+      console.log(`  - Expected batch count: ${storedExpectedBatches} batches (batch size: ${batchSize})`);
+      console.log(`  - Note: Last batch may have fewer than ${batchSize} contacts`);
+      console.log(`🔍 COUNT BREAKDOWN: Successful: ${successfulCalls}, Batch failed: ${batchFailedCalls}, Current completed: ${currentCompleted}, Current failed: ${currentFailed}`);
+      
+      // Validate the correct conditions:
+      // 1. Total processed should equal client data count
+      // 2. Total expected from batches should equal client data count
+      const countsMatchClientData = totalProcessed === clientDataCount;
+      const batchCountsMatch = totalExpectedFromBatches === clientDataCount;
+      
+      if (!countsMatchClientData || !batchCountsMatch) {
+        // Calculate the actual failed count including batch failures
+        const actualFailed = batchFailedCalls + Math.max(0, currentFailed - batchFailedCalls);
+        const actualCompleted = clientDataCount - actualFailed;
         
-        console.log(`🔧 COUNT ADJUSTMENT: Adjusting completed from ${currentCompleted} to ${adjustedCompleted} to match client data count ${clientDataCount}`);
+        console.log(`🔧 COUNT ADJUSTMENT NEEDED:`);
+        console.log(`  - Counts match client data: ${countsMatchClientData}`);
+        console.log(`  - Batch counts match: ${batchCountsMatch}`);
+        console.log(`  - Adjusting completed from ${currentCompleted} to ${actualCompleted}`);
+        console.log(`  - Adjusting failed from ${currentFailed} to ${actualFailed}`);
+        console.log(`  - Total will be: ${actualCompleted + actualFailed} (should equal ${clientDataCount})`);
         
         await updateDoc(doc(broadcastsRef, broadcastId), {
-          completedCalls: adjustedCompleted,
-          failedCalls: adjustedFailed,
+          completedCalls: actualCompleted,
+          failedCalls: actualFailed,
           lastUpdated: Timestamp.now()
         });
         
-        console.log(`✅ COUNT ADJUSTED: Completed: ${adjustedCompleted}, Failed: ${adjustedFailed}, Total: ${adjustedCompleted + adjustedFailed} (should equal ${clientDataCount})`);
+        console.log(`✅ COUNT ADJUSTED: Completed: ${actualCompleted}, Failed: ${actualFailed}, Total: ${actualCompleted + actualFailed} (should equal ${clientDataCount})`);
         
-        return { completed: adjustedCompleted, failed: adjustedFailed };
+        return { completed: actualCompleted, failed: actualFailed };
       } else {
-        console.log(`✅ COUNT MATCH: Total processed ${totalProcessed} matches client data count ${clientDataCount}`);
+        console.log(`✅ COUNT VALIDATION PASSED:`);
+        console.log(`  - Total processed ${totalProcessed} matches client data count ${clientDataCount}`);
+        console.log(`  - Batch counts ${totalExpectedFromBatches} match client data count ${clientDataCount}`);
         return { completed: currentCompleted, failed: currentFailed };
       }
     } catch (error) {
@@ -212,6 +247,7 @@ export const BroadcastScheduler = () => {
         }
 
         const callSids: string[] = [];
+        const failedCalls: string[] = []; // Track failed calls separately
         let chunkIndex = 0;
         const totalExpectedCalls = contacts.length;
 
@@ -236,13 +272,34 @@ export const BroadcastScheduler = () => {
               })
             });
 
+            if (!response.ok) {
+              const errorText = await response.text();
+              console.error(`Chunk ${chunkIndex + 1} API Error:`, errorText);
+              
+              // Mark all contacts in this failed batch as failed
+              const failedCallSids = chunk.map((contact, idx) => `failed_chunk_${chunkIndex}_${idx}_${contact.id}`);
+              failedCalls.push(...failedCallSids);
+              console.log(`Marked ${chunk.length} calls as failed for chunk ${chunkIndex + 1}`);
+              
+              // Add delay between batches even for failed ones
+              if (chunkIndex < clientChunks.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
+              chunkIndex++;
+              continue;
+            }
+
             const data = await response.json();
             if (data && data.data && data.data.callSids) {
               callSids.push(...data.data.callSids);
               console.log(`Processed chunk ${chunkIndex + 1}, CallSids: ${data.data.callSids.join(', ')}`);
+            } else {
+              console.error(`Chunk ${chunkIndex + 1} - Invalid response format:`, data);
               
-              // Process batch counting logic here (same as in main function)
-              // ... (batch counting logic would go here)
+              // Mark all contacts in this failed batch as failed
+              const failedCallSids = chunk.map((contact, idx) => `failed_chunk_${chunkIndex}_${idx}_${contact.id}`);
+              failedCalls.push(...failedCallSids);
+              console.log(`Marked ${chunk.length} calls as failed for chunk ${chunkIndex + 1} (invalid response)`);
             }
 
             // Add delay between batches
@@ -253,17 +310,35 @@ export const BroadcastScheduler = () => {
             chunkIndex++;
           } catch (chunkError) {
             console.error(`Error processing chunk ${chunkIndex + 1}:`, chunkError);
+            
+            // Mark all contacts in this failed batch as failed
+            const failedCallSids = chunk.map((contact, idx) => `failed_chunk_${chunkIndex}_${idx}_${contact.id}`);
+            failedCalls.push(...failedCallSids);
+            console.log(`Marked ${chunk.length} calls as failed for chunk ${chunkIndex + 1} (network error)`);
+            
+            // Add delay between batches even for failed ones
+            if (chunkIndex < clientChunks.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            chunkIndex++;
             continue;
           }
         }
 
-        // Update broadcast with callSids
+        // Update broadcast with callSids and failed calls
+        const totalCalls = callSids.length + failedCalls.length;
+        const batchSize = 10;
+        const expectedBatches = Math.ceil(contacts.length / batchSize);
+        
         await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
           callSids,
+          failedCallSids: failedCalls, // Store failed calls separately
+          failedCallsCount: failedCalls.length, // Store count for easy access
+          expectedBatchCount: expectedBatches, // Store expected batch count for reference
           lastUpdated: Timestamp.now()
         });
 
-        console.log(`✅ Broadcast ${broadcastDoc.id} started with ${callSids.length} calls`);
+        console.log(`✅ Broadcast ${broadcastDoc.id} started with ${callSids.length} successful calls and ${failedCalls.length} failed calls (total: ${totalCalls})`);
         
         // Exit after starting the first broadcast at this time
         // The next broadcast will be started when this one completes
@@ -394,8 +469,13 @@ export const BroadcastScheduler = () => {
             const currentFailed = broadcast.failedCalls || 0;
             const totalProcessed = currentCompleted + currentFailed;
             
+            // Calculate total expected calls (successful + failed from batch processing)
+            const successfulCalls = broadcast.callSids?.length || 0;
+            const batchFailedCalls = broadcast.failedCallsCount || 0;
+            const totalExpectedCalls = successfulCalls + batchFailedCalls;
+            
             // Check if all calls are processed
-            if (totalProcessed >= broadcast.callSids.length) {
+            if (totalProcessed >= totalExpectedCalls) {
               // Validate and adjust counts to match client data count
               const adjustedCounts = await validateAndAdjustCounts(doc.id, broadcast.clientCount);
               
@@ -513,6 +593,13 @@ export const BroadcastScheduler = () => {
             console.log(`✅ Starting broadcast ${broadcastDoc.id} - current time is after scheduled time`)
             console.log(`🔒 GLOBAL LOCK: Preventing other scheduled broadcasts from starting`);
             console.log(`Executing scheduled broadcast: ${broadcastDoc.id}`);
+            console.log(`📊 Broadcast details:`, {
+              id: broadcastDoc.id,
+              scheduledTime: scheduledDateTime.toISOString(),
+              currentTime: currentDateTime.toISOString(),
+              datasetId: broadcast.dataSetId,
+              template: broadcast.template?.substring(0, 50) + '...'
+            });
             const dataset = getDatasetFromLocalStorage(broadcast.dataSetId);
 
             if (!dataset) {
@@ -523,7 +610,14 @@ export const BroadcastScheduler = () => {
             }
 
             console.log('Dataset found:', dataset);
+            console.log(`📋 Dataset details:`, {
+              id: dataset.id,
+              name: dataset.name,
+              dataLength: dataset.data?.length || 0,
+              fileName: dataset.fileName
+            });
             const contacts = dataset.data;
+            console.log(`👥 Contacts sample:`, contacts?.slice(0, 2));
             isScheduledStarted = true;
             didStartAny = true;
           } else {
@@ -531,8 +625,7 @@ export const BroadcastScheduler = () => {
             // console.log("no")
           }
           
-         if (isScheduledStarted) 
-          {
+          if (isScheduledStarted) {
             console.log("isScheduledStarted", isScheduledStarted);
             console.log(`Executing scheduled broadcast: ${broadcastDoc.id}`);
             
@@ -561,8 +654,15 @@ export const BroadcastScheduler = () => {
 
               // Validate contacts
               if (!contacts || !Array.isArray(contacts) || contacts.length === 0) {
+                console.error('❌ CONTACT VALIDATION FAILED:', {
+                  contacts: contacts,
+                  isArray: Array.isArray(contacts),
+                  length: contacts?.length || 0
+                });
                 throw new Error('No valid contacts found in dataset');
               }
+              
+              console.log(`✅ CONTACT VALIDATION PASSED: Found ${contacts.length} contacts`);
 
               const batchSize = 8; // Balanced batch size for optimal performance
               console.log(`🔧 CURRENT BATCH SIZE: ${batchSize} (should be 8, not 16!) - ${new Date().toISOString()}`);
@@ -590,6 +690,7 @@ export const BroadcastScheduler = () => {
               }
               
               console.log("clientChunks", clientChunks);
+              console.log(`🔄 Starting batch processing: ${clientChunks.length} chunks with batch size ${batchSize}`);
               const callSids: string[] = [];
               for (const chunk of clientChunks) {
                 try {
@@ -635,6 +736,10 @@ export const BroadcastScheduler = () => {
                     return '+1' + cleanPhone;
                   };
                   
+                  console.log(`🚀 MAKING API CALL for chunk ${chunkIndex + 1} with ${validChunk.length} contacts`);
+                  console.log(`📞 Phone numbers: ${validChunk.map(client => formatPhoneNumber(client.phone)).join(',')}`);
+                  console.log(`📝 Content samples: ${validChunk.slice(0, 2).map(client => personalizeTemplate(broadcast.template, client))}`);
+                  
                   const response = await makeApiCall(`${serverUrl}/api/make-call`, {
                     method: 'POST',
                     headers: { 
@@ -650,6 +755,8 @@ export const BroadcastScheduler = () => {
                       content: validChunk.map(client => personalizeTemplate(broadcast.template, client))
                     })
                   });
+                  
+                  console.log(`📡 API Response status: ${response.status}`);
 
                   if (!response.ok) {
                     console.error(`❌ API call failed for chunk ${chunkIndex + 1}, marking entire batch as failed`);
@@ -956,13 +1063,26 @@ export const BroadcastScheduler = () => {
               // Auto-completion already started after first batch
               console.log(`✅ All batches processed for broadcast ${broadcastDoc.id}, auto-completion already running`);
             } catch (error) {
-              console.error(`Error processing broadcast ${broadcastDoc.id}:`, error);
-              // Update broadcast status to failed
-              await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
-                status: 'failed',
-                lastUpdated: Timestamp.now(),
-                error: error instanceof Error ? error.message : 'Unknown error occurred'
+              console.error(`❌ CRITICAL ERROR processing broadcast ${broadcastDoc.id}:`, error);
+              console.error(`❌ Error stack:`, error.stack);
+              console.error(`❌ Error details:`, {
+                name: error.name,
+                message: error.message,
+                broadcastId: broadcastDoc.id,
+                datasetId: broadcast.dataSetId
               });
+              
+              // Update broadcast status to failed
+              try {
+                await updateDoc(doc(inProgressBroadcastsRef, broadcastDoc.id), {
+                  status: 'failed',
+                  lastUpdated: Timestamp.now(),
+                  error: error instanceof Error ? error.message : 'Unknown error occurred'
+                });
+                console.log(`✅ Broadcast ${broadcastDoc.id} marked as failed`);
+              } catch (updateError) {
+                console.error(`❌ Failed to update broadcast status to failed:`, updateError);
+              }
               
               // Release the global lock when broadcast fails
               isAnyBroadcastRunning.current = false;
@@ -1016,6 +1136,26 @@ export const BroadcastScheduler = () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
+    };
+  }, []);
+
+  // Add a global function for testing scheduled broadcasts
+  useEffect(() => {
+    (window as any).testScheduledBroadcast = () => {
+      console.log('🧪 Testing scheduled broadcast execution...');
+      checkScheduledBroadcasts();
+    };
+    
+    (window as any).getBroadcastStatus = () => {
+      console.log('📊 Broadcast Status:', {
+        isAnyBroadcastRunning: isAnyBroadcastRunning.current,
+        serverUrl: serverUrl
+      });
+    };
+    
+    return () => {
+      delete (window as any).testScheduledBroadcast;
+      delete (window as any).getBroadcastStatus;
     };
   }, []);
 

@@ -44,6 +44,9 @@ interface ScheduledBroadcast {
   clientCount: number;
   dataSetId: string;
   callSids?: string[];
+  failedCallSids?: string[]; // Array of failed call SIDs from batch processing
+  failedCallsCount?: number; // Count of failed calls from batch processing
+  expectedBatchCount?: number; // Expected number of batches to process (for reference only)
   completedCalls?: number;
   failedCalls?: number;
   lastUpdated?: Date;
