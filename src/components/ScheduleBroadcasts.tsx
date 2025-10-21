@@ -103,7 +103,7 @@ const ScheduleBroadcasts: React.FC = () => {
   });
   const [currentTime, setCurrentTime] = useState(new Date());
   const { toast } = useToast();
-  const serverUrl = 'http://35.88.71.8:5000';
+  const serverUrl = 'http://188.227.196.46:5000';
 
   // Update current time every second
   useEffect(() => {

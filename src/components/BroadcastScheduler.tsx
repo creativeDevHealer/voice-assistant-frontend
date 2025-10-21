@@ -33,7 +33,7 @@ interface ScheduledBroadcast {
 
 export const BroadcastScheduler = () => {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const serverUrl = 'http://35.88.71.8:5000';
+  const serverUrl = 'http://188.227.196.46:5000';
   
   // Global lock to prevent multiple scheduled broadcasts from running simultaneously
   const isAnyBroadcastRunning = useRef<boolean>(false);

@@ -14,7 +14,7 @@ export interface TelnyxBalanceResponse {
 
 class BalanceService {
   private apiKey: string;
-  private baseUrl: string = 'http://35.88.71.8:5000'; // Use your backend server as proxy
+  private baseUrl: string = 'http://188.227.196.46:5000'; // Use your backend server as proxy
 
   constructor() {
     // Get API key from environment variables or localStorage

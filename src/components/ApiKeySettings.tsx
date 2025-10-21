@@ -28,7 +28,7 @@ const ApiKeySettings: React.FC<ApiKeySettingsProps> = ({ children }) => {
 
     try {
       // Test the API key by making a direct call to the backend
-      const response = await fetch('http://35.88.71.8:5000/api/telnyx-balance', {
+      const response = await fetch('http://188.227.196.46:5000/api/telnyx-balance', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
