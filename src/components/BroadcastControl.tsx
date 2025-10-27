@@ -358,7 +358,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   }
 
   function splitNumberIntoDigits(numberString: string) {
-    return numberString.toString().split('').join(',');
+    return numberString.toString().split('').join('-');
   }
 
   function chunkArray(array, size) {
