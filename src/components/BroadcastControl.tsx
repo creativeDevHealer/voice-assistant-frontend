@@ -353,8 +353,12 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     return template
       .replace(/\{firstName\}/g, client.firstName)
       .replace(/\{lastName\}/g, client.lastName)
-      .replace(/\{fileNumber\}/g, client.fileNumber)
+      .replace(/\{fileNumber\}/g, splitNumberIntoDigits(client.fileNumber))
       .replace(/\{phoneNumber\}/g, formatPhoneNumber(client.phone));
+  }
+
+  function splitNumberIntoDigits(numberString: string) {
+    return numberString.toString().split('').join(',');
   }
 
   function chunkArray(array, size) {
