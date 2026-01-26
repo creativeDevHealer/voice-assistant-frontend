@@ -369,7 +369,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     return result;
   }
 
-  const batchSize = 8; // Reduced to avoid channel capacity issues
+  const batchSize = 20; // Reduced to avoid channel capacity issues
   const RETRY_DELAY = 1000; // Reduced from 2000ms for faster retries
 
   // Add delay function
@@ -580,6 +580,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
             contact_id: chunk.map(client => client.id).join(','),
             contact_name: chunk.map(client => client.firstName + " " + client.lastName).join(','),
             content: chunk.map(client => personalizeTemplate(selectedTemplate.content, client)),
+            batchIndex: batchIndex,
           })
         });
 
