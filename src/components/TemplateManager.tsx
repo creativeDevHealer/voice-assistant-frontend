@@ -51,7 +51,7 @@ const TemplateManager: React.FC<TemplateManagerProps> = ({
       {
         id: "1",
         name: "Default Message",
-        content: "Hello {firstName} {lastName}. This message is in reference to file number {fileNumber}. This matter is now pending final review and requires immediate attention. Please contact our office today at 312-778-2135. Again, 312-778-2135.",
+        content: "Hello {firstName} {lastName}. This is a time-sensitive message regarding file number {fileNumber}. The courier was unable to complete delivery and your documents have been returned. Please address this immediately by contacting our office today at 312-778-2135. Again, 312-778-2135.",
         createdAt: new Date(2023, 6, 15),
         isDefault: true
       }
