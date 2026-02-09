@@ -65,6 +65,8 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   const [startTime, setStartTime] = useState<Date | null>(null);
   const [duration, setDuration] = useState<string>("00:00:00");
   const callSidsRef = useRef(callSids);
+  const controllerRef = useRef<AbortController | null>(null);
+  const isBroadcastPausedRef = useRef(false);
   const [retryCount, setRetryCount] = useState(0);
   // const [serverUrl, setServerUrl] = useState('https://dft9oxen20o6ge-3000.proxy.runpod.net');
   // const [serverUrl, setServerUrl] = useState('http://localhost:5000');
@@ -373,26 +375,50 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   const RETRY_DELAY = 1000; // Reduced from 2000ms for faster retries
 
   // Add delay function
-  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  const delay = (ms: number, signal?: AbortSignal) =>
+    new Promise<void>((resolve, reject) => {
+      const timeoutId = setTimeout(resolve, ms);
+      if (signal) {
+        if (signal.aborted) {
+          clearTimeout(timeoutId);
+          reject(new Error("Broadcast paused"));
+          return;
+        }
+        signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timeoutId);
+            reject(new Error("Broadcast paused"));
+          },
+          { once: true }
+        );
+      }
+    });
 
   // Add retry logic for API calls
   const makeApiCall = async (url: string, options: any, retryCount = 0) => {
     try {
+      if (options?.signal?.aborted) {
+        throw new Error("Broadcast paused");
+      }
       const response = await fetch(url, options);
       
       if (response.status === 429) { // Too Many Requests
         if (retryCount < MAX_RETRIES) {
           console.log(`Rate limited, retrying in ${RETRY_DELAY}ms... (Attempt ${retryCount + 1}/${MAX_RETRIES})`);
-          await delay(RETRY_DELAY * (retryCount + 1)); // Exponential backoff
+          await delay(RETRY_DELAY * (retryCount + 1), options?.signal); // Exponential backoff
           return makeApiCall(url, options, retryCount + 1);
         }
       }
       
       return response;
     } catch (error) {
+      if (options?.signal?.aborted) {
+        throw new Error("Broadcast paused");
+      }
       if (retryCount < MAX_RETRIES) {
         console.log(`Request failed, retrying in ${RETRY_DELAY}ms... (Attempt ${retryCount + 1}/${MAX_RETRIES})`);
-        await delay(RETRY_DELAY * (retryCount + 1));
+        await delay(RETRY_DELAY * (retryCount + 1), options?.signal);
         return makeApiCall(url, options, retryCount + 1);
       }
       throw error;
@@ -539,6 +565,12 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
 
     // Reset all states at the start of new broadcast
     setIsBroadcasting(true);
+    isBroadcastPausedRef.current = false;
+    if (controllerRef.current) {
+      controllerRef.current.abort();
+    }
+    const abortController = new AbortController();
+    controllerRef.current = abortController;
     setCompletedCalls(0);
     setFailedCalls(0);
     setCallSids([]);
@@ -559,12 +591,20 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     let totalFailedBatches = 0;
 
     for (let batchIndex = 0; batchIndex < clientChunks.length; batchIndex++) {
+      if (isBroadcastPausedRef.current || abortController.signal.aborted) {
+        console.log("Broadcast paused - stopping batch loop.");
+        break;
+      }
       const chunk = clientChunks[batchIndex];
       
       try {
         // Reduced delay between batches for 10 concurrent call limit
         if (!isFirstBatch) {
-          await delay(100); // 2 second delay between batches
+          await delay(100, abortController.signal); // 2 second delay between batches
+          if (isBroadcastPausedRef.current || abortController.signal.aborted) {
+            console.log("Broadcast paused during delay - stopping batch loop.");
+            break;
+          }
         }
         
         console.log(`Processing batch ${batchIndex + 1}/${clientChunks.length} with ${chunk.length} calls`);
@@ -575,6 +615,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
             'Content-Type': 'application/json',
             'ngrok-skip-browser-warning': 'true'
           },
+          signal: abortController.signal,
           body: JSON.stringify({
             phonenumber: chunk.map(client => formatPhoneNumber(client.phone)).join(','),
             contact_id: chunk.map(client => client.id).join(','),
@@ -583,6 +624,10 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
             batchIndex: batchIndex,
           })
         });
+        if (isBroadcastPausedRef.current || abortController.signal.aborted) {
+          console.log("Broadcast paused after API call - stopping batch loop.");
+          break;
+        }
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -722,6 +767,10 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
         }
         
       } catch (batchError) {
+        if (isBroadcastPausedRef.current || abortController.signal.aborted) {
+          console.log("Broadcast paused - stopping batch loop.");
+          break;
+        }
         console.error(`Batch ${batchIndex + 1} failed:`, batchError);
         totalFailedBatches++;
         
@@ -744,6 +793,10 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
         });
         continue; // Continue to next batch
       }
+    }
+
+    if (isBroadcastPausedRef.current || abortController.signal.aborted) {
+      return;
     }
 
     // Show summary of broadcast results
@@ -911,6 +964,11 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
   };
 
   const pauseBroadcast = () => {
+    isBroadcastPausedRef.current = true;
+    if (controllerRef.current) {
+      controllerRef.current.abort();
+      controllerRef.current = null;
+    }
     setIsBroadcasting(false);
     setStartTime(null);
     setBroadcastId(null);
@@ -928,8 +986,8 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     resetCounters();
     localStorage.removeItem('broadcastState'); // Clear saved state when pausing
     toast({
-      title: "Broadcast paused",
-      description: "You can resume broadcasting at any time"
+      title: "Broadcast Stopped",
+      description: "Broadcast Stopped"
     });
   };
 
@@ -1079,26 +1137,6 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
               </div>
             )}
           </div>
-          
-          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="text-sm text-blue-800">
-              <strong>📞 Optimized for 10 Concurrent Calls:</strong> Broadcasting uses batches of 8 calls with 2-second delays between batches. 
-              This is optimized for standard Telnyx accounts with higher concurrent call limits for faster campaign execution.
-            </div>
-          </div>
-
-          {/* Debug Information */}
-          {process.env.NODE_ENV === 'development' && (
-            <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs">
-              <div className="text-gray-700">
-                <strong>🐛 Debug Info:</strong><br/>
-                CallSids tracked: {callSids.length}<br/>
-                CallStatuses: {callStatuses.length}<br/>
-                IsBroadcasting: {isBroadcasting.toString()}<br/>
-                Polling active: {pollingIntervalRef.current ? 'Yes' : 'No'}
-              </div>
-            </div>
-          )}
 
           <div className="flex flex-col sm:flex-row gap-3">
             {isBroadcasting ? (
@@ -1107,7 +1145,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
                 onClick={pauseBroadcast}
               >
                 <Pause className="h-4 w-4" />
-                Pause Broadcasting
+                Stop Broadcasting
               </Button>
             ) : (
               <Button
@@ -1119,15 +1157,6 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
                 Start Broadcasting
               </Button>
             )}
-            <Button
-              variant="outline"
-              className="gap-2"
-              disabled={isBroadcasting}
-              onClick={cancelAllCalls}
-            >
-              <Ban className="h-4 w-4" />
-              Cancel
-            </Button>
           </div>
         </div>
       </Card>
