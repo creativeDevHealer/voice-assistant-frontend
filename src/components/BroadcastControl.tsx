@@ -564,7 +564,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
       try {
         // Reduced delay between batches for 10 concurrent call limit
         if (!isFirstBatch) {
-          await delay(5000); // 2 second delay between batches
+          await delay(1000); // 2 second delay between batches
         }
         
         console.log(`Processing batch ${batchIndex + 1}/${clientChunks.length} with ${chunk.length} calls`);
