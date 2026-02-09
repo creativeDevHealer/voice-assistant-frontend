@@ -69,7 +69,7 @@ export const BroadcastScheduler = () => {
       const totalExpectedFromBatches = successfulCalls + batchFailedCalls;
       
       // Calculate batch processing validation
-      const batchSize = 20; // Same as chunkSize in startNextScheduledBroadcast
+      const batchSize = 50; // Same as chunkSize in startNextScheduledBroadcast
       const storedExpectedBatches = broadcastData?.expectedBatchCount || Math.ceil(clientDataCount / batchSize);
       
       // NOTE: expectedFromBatchProcessing is NOT batchCount * batchSize
@@ -328,7 +328,7 @@ export const BroadcastScheduler = () => {
 
         // Update broadcast with callSids and failed calls
         const totalCalls = callSids.length + failedCalls.length;
-        const batchSize = 20;
+        const batchSize = 50;
         const expectedBatches = Math.ceil(contacts.length / batchSize);
         
         await updateDoc(doc(broadcastsRef, broadcastDoc.id), {
@@ -665,7 +665,7 @@ export const BroadcastScheduler = () => {
               
               console.log(`✅ CONTACT VALIDATION PASSED: Found ${contacts.length} contacts`);
 
-              const batchSize = 20; // Balanced batch size for optimal performance
+              const batchSize = 50; // Balanced batch size for optimal performance
               console.log(`🔧 CURRENT BATCH SIZE: ${batchSize} (should be 8, not 16!) - ${new Date().toISOString()}`);
               // Process contacts in small chunks for channel limit optimization
               function chunkArray(array, size) {
@@ -697,7 +697,7 @@ export const BroadcastScheduler = () => {
                 try {
                   console.log("isFirstBatch", isFirstBatch);
                   if (!isFirstBatch) {
-                    await delay(1000); // Balanced 1 second delay between batches
+                    await delay(100); // Balanced 1 second delay between batches
                   }
                   
                   console.log("chunk", chunk);
@@ -834,7 +834,7 @@ export const BroadcastScheduler = () => {
                     
                     // Calculate batch counts ensuring completed + failed = batch size
                     let failedInBatch, completedInBatch;
-                    if (batchSize <= 20) {
+                    if (batchSize <= 50) {
                       // For small batches, use random probability to ensure some failures
                       const shouldHaveFailure = Math.random() < 0.3; // 30% chance of having at least 1 failure
                       failedInBatch = shouldHaveFailure ? 1 : 0;

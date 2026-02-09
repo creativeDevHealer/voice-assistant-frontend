@@ -369,7 +369,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
     return result;
   }
 
-  const batchSize = 20; // Reduced to avoid channel capacity issues
+  const batchSize = 50; // Reduced to avoid channel capacity issues
   const RETRY_DELAY = 1000; // Reduced from 2000ms for faster retries
 
   // Add delay function
@@ -564,7 +564,7 @@ const BroadcastControl: React.FC<BroadcastProps> = ({
       try {
         // Reduced delay between batches for 10 concurrent call limit
         if (!isFirstBatch) {
-          await delay(1000); // 2 second delay between batches
+          await delay(100); // 2 second delay between batches
         }
         
         console.log(`Processing batch ${batchIndex + 1}/${clientChunks.length} with ${chunk.length} calls`);
